@@ -85,7 +85,7 @@ void MyTcpSocket::receiveMsg()
 
     switch(pdu->uiMsgType){
 
-    case ENUM_MSG_TYPE_REGIST_REQUEST:{                             //如果是注册请求
+    case ENUM_MSG_TYPE_REGIST_REQUEST:{                                     //如果是注册请求
 
         char caName[32] = {'\0'};
         char caPwd[32] = {'\0'};
@@ -118,7 +118,7 @@ void MyTcpSocket::receiveMsg()
 
     }
 
-    case ENUM_MSG_TYPE_LOGIN_REQUEST:{                              //登录请求
+    case ENUM_MSG_TYPE_LOGIN_REQUEST:{                                      //登录请求
 
         char caName[32] = {'\0'};
         char caPwd[32] = {'\0'};
@@ -149,6 +149,24 @@ void MyTcpSocket::receiveMsg()
 
         break;
 
+    }
+
+    case ENUM_MSG_TYPE_LOGIN_OUT_REQUEST:{                                  //注销请求
+
+        QString name = QString::fromUtf8(pdu->caData);
+
+        //如果删除失败
+        if(!OperateDB::getInstance().handleLoginOut(name.toStdString().c_str())){
+
+            QMessageBox::information(nullptr, "Login Out", "login out fail");
+            break;
+        }
+
+        PDU* res_pdu = makePDU();
+        addHelper(res_pdu, "login out done", ENUM_MSG_TYPE_LOGIN_OUT_RESPOND);
+        delete res_pdu;
+
+        break;
     }
 
     case ENUM_MSG_TYPE_ALL_ONLINE_REQUEST:{                                 //查询在线用户

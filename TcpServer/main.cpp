@@ -1,5 +1,6 @@
 #include "tcpserver.h"
 #include <QApplication>
+#include "operatedb.h"
 
 int main(int argc, char *argv[])
 {

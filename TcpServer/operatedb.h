@@ -19,6 +19,7 @@ public:
 
     bool handleRegist(const char* name, const char* pwd);   //处理注册部分数据库
     bool handleLogin(const char* name, const char* pwd);
+    bool handleLoginOut(const char* name);
     void handleOffline(const char* name);
     QStringList handleAllOnline();                          //处理查看在线用户请求，返回一个列表
     int handleSearchUsr(const char* name);                  //按名字查询用户

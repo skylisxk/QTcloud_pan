@@ -87,6 +87,32 @@ bool OperateDB::handleLogin(const char *name, const char *pwd)
 
 }
 
+bool OperateDB::handleLoginOut(const char *name)
+{
+    if(!name){
+
+        return 0;
+    }
+
+    //考虑外键约束
+    QString sql1 = "DELETE FROM friendInfo "
+                   "WHERE id = (SELECT id FROM usrInfo WHERE name = ?) "
+                   "OR friendId = (SELECT id FROM usrInfo WHERE name = ?)";
+
+    QString sql2 = "delete from usrInfo where name = ?";
+    QSqlQuery query1, query2;
+
+    query1.prepare(sql1);
+    query1.addBindValue(name);
+    query1.addBindValue(name);
+
+    query2.prepare(sql2);
+    query2.addBindValue(name);
+
+    return query1.exec() && query2.exec();
+
+}
+
 void OperateDB::handleOffline(const char *name)
 {
     if(name == nullptr){

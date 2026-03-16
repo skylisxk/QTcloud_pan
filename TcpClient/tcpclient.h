@@ -37,7 +37,6 @@ public:
 
 public slots:
 
-    void testConnect();
     void receiveMsg();
     void onReadyRead();                                                 //读文件
     void onConnected();                                                 // 连接成功时触发
@@ -45,11 +44,12 @@ public slots:
     void onError(QAbstractSocket::SocketError error);                   // 错误处理
 
 private slots:
-    //测试用void on_sendpb_clicked();
 
     void on_regist_pb_clicked();
 
     void on_login_clicked();
+
+    void on_logout_pb_clicked();
 
 private:
     Ui::TcpClient *ui;

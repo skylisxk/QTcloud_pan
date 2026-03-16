@@ -42,6 +42,7 @@ TcpClient::TcpClient(QWidget *parent)
     loadConfig();
 
     book = nullptr;
+    pFriend = nullptr;
     curPath = "./";
     rootPath = "./";
 
@@ -98,10 +99,6 @@ QTcpSocket &TcpClient::getTcpSocket()
     return tcpSocket;
 }
 
-void TcpClient::testConnect()
-{
-    QMessageBox::information(this, "connecting", "success");
-}
 
 void TcpClient::receiveMsg()
 {
@@ -164,6 +161,13 @@ void TcpClient::receiveMsg()
 
         break;
 
+    }
+
+    case ENUM_MSG_TYPE_LOGIN_OUT_RESPOND:{
+
+        QMessageBox::information(this, "Login Out", "login out success");
+
+        break;
     }
 
     case ENUM_MSG_TYPE_ALL_ONLINE_RESPOND:{
@@ -423,7 +427,6 @@ void TcpClient::on_regist_pb_clicked()
 
 }
 
-
 void TcpClient::on_login_clicked()
 {
 
@@ -455,4 +458,25 @@ void TcpClient::on_login_clicked()
     pdu = NULL;
 }
 
+
+
+void TcpClient::on_logout_pb_clicked()
+{
+    QString name = ui->name_le->text();
+
+    if(name.isEmpty()){
+
+        return;
+    }
+
+    PDU* pdu = makePDU();
+    pdu->uiMsgType = ENUM_MSG_TYPE_LOGIN_OUT_REQUEST;
+
+    //放置用户名
+    qstrncpy(pdu->caData, name.toUtf8().constData(), 64);
+
+    tcpSocket.write((char*)pdu, pdu->uiPDUlen);
+
+    delete pdu;
+}
 
