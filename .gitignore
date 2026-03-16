@@ -1,0 +1,44 @@
+# Qt 生成文件
+*.pro.user
+*.pro.user.*
+Makefile
+Makefile.*
+debug/
+release/
+*-build-*
+build-*
+*.o
+*.obj
+*.exe
+*.dll
+*.a
+*.lib
+moc_*.cpp
+moc_*.h
+ui_*.h
+qrc_*.cpp
+
+# IDE 文件
+.vscode/
+.qtc_clangd/
+*.creator.user*
+*.creator
+*.files
+*.includes
+.config
+.idea/
+
+# 编译输出目录
+bin/
+obj/
+Debug/
+Release/
+x64/
+x86/
+
+# 临时文件
+*.swp
+*.swo
+*~
+core
+*.core
