@@ -77,18 +77,58 @@ void Friend::updateFriendList(PDU *pdu)                     //客户端接收并
         return;
     }
 
-    listWidget->clear();
-
     int uiSize = pdu->uiMsglen / 32;
-    char login_name[32] = {'\0'};
+    /************************多线程********************/
+    // 判断是否使用线程池
+    bool useThreadPool = (m_threadPool != nullptr && uiSize > 5);
 
-    for(int i = 0; i < uiSize; i++){
+    if(useThreadPool){
+        //拷贝pdu避免被释放
+        QByteArray rawData((const char*)pdu->caMsg, pdu->uiMsglen);
 
-        memcpy(login_name, (char*)(pdu->caMsg) + 32 * i, 32);
+        m_threadPool->enqueue([this, rawData, uiSize](){
 
-        //把结果输出到窗口
-        listWidget->addItem(login_name);
+            QStringList friend_list;
+            friend_list.reserve(uiSize);
 
+            for(int i = 0; i < uiSize; i++){
+
+                char login_name[33] = {'\0'};  // 32字节 + 结尾
+                memcpy(login_name, rawData.data() + i * 32, 32);
+                friend_list.append(QString::fromUtf8(login_name));
+
+            }
+
+            QMetaObject::invokeMethod(this, [this, friend_list](){
+
+                listWidget->clear();
+
+                for(auto& name : friend_list){
+                    qDebug() << name;
+                    listWidget->addItem(name);
+                }
+
+            }, Qt::QueuedConnection);
+
+        });
+
+    }
+
+    else{
+
+        //获取好友名称
+        char login_name[33] = {'\0'};
+
+        listWidget->clear();
+
+        for(int i = 0; i < uiSize; i++){
+
+            memcpy(login_name, (char*)(pdu->caMsg) + 32 * i, 32);
+
+            //把结果输出到窗口
+            listWidget->addItem(login_name);
+
+        }
     }
 
 }
@@ -103,6 +143,11 @@ void Friend::updateGroupMsg(PDU *pdu)
 QListWidget *Friend::getListWidget()
 {
     return listWidget;
+}
+
+void Friend::setThreadPool(ThreadPool *pool)
+{
+    m_threadPool = pool;
 }
 
 void Friend::showOnline()

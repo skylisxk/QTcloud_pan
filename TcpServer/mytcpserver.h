@@ -4,6 +4,7 @@
 #include <QTcpServer>
 #include <QList>
 #include "mytcpsocket.h"
+#include "threadpool.h"
 
 
 class MyTcpServer : public QTcpServer
@@ -13,11 +14,13 @@ class MyTcpServer : public QTcpServer
 private:
 
     QList<MyTcpSocket*> tcpSocketList;
+    ThreadPool m_threadPool;
 
 public:
     MyTcpServer();
 
     static MyTcpServer &getInstance();
+    ThreadPool& getThreadPool();
 
     void incomingConnection(qintptr socketDescriptor);
     void transcation(const char* des_name, PDU* pdu);                                   //转发名字

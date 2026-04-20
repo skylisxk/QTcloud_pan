@@ -10,6 +10,7 @@
 #include <QHBoxLayout>
 #include "online.h"
 #include "protocol.h"
+#include "threadpool.h"
 
 class Friend : public QWidget
 {
@@ -23,6 +24,8 @@ public:
     void updateFriendList(PDU* pdu);
     void updateGroupMsg(PDU* pdu);
     QListWidget* getListWidget();
+
+    void setThreadPool(ThreadPool* pool);
 
 signals:
 
@@ -45,6 +48,8 @@ private:
                * msgSendButton, *privateChatButton;
 
     Online* pOnline;                                            //需要一个Online的对象来操作，显示输出框
+
+    ThreadPool* m_threadPool;
 
 };
 

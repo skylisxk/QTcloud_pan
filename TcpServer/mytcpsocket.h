@@ -7,6 +7,7 @@
 #include <QFileInfoList>
 #include "protocol.h"
 #include <QFile>
+#include "threadpool.h"
 
 class MyTcpSocket : public QTcpSocket
 {
@@ -27,11 +28,21 @@ public:
         d_receiving
     };
 
+    void setThreadPool(ThreadPool* pool);
+
 
 public slots:
     void receiveMsg();
     void clientOffline();                                           //处理下线功能
     void onReadyRead();                                             //读文件
+
+    //下载
+    void sendNextChunk();
+    void finishDownload();
+    void handleDownloadError(const QString& error);
+    void onDataToSend(const QByteArray& data);  // 新增：主线程发送数据
+
+
 private:
     QString strName;
     QFile q_file;
@@ -52,15 +63,15 @@ private:
     void sendUploadResponse(const char* status);
 
 
+    ThreadPool* m_threadPool;
+    mutable std::mutex download_mutex;
     QFile* download_file;
     FileDownloadState download_state;
-    qint64 download_sent;            // 已发送大小
-    qint64 download_total;           // 文件总大小
+    std::atomic<qint64> download_sent{0};            // 已发送大小
+    std::atomic<qint64> download_total{0};           // 文件总大小
     void handleDownloadRequest(PDU* pdu);
-    void sendNextChunk();
-    void finishDownload();
-    void handleDownloadError(const QString& error);
 
+    //分享
     void handleShareFile(PDU* pdu);
     void handleShareRespond(PDU* pdu);
     void handleShareConfirm(PDU* pdu);
@@ -69,6 +80,16 @@ private:
 signals:
 
     void offline(MyTcpSocket* mysocket);                            //下线信号
+
+    void writeFileData(const QByteArray& data);                      // 新增：写文件数据的信号
+    void uploadProgress(qint64 received, qint64 total);             // 新增：上传进度信号
+    void uploadComplete();                                            // 新增：上传完成信号
+    void uploadError(const QString& error);                         // 新增：上传错误信号
+
+    void nextChunk();                    // 发送下一块的信号
+    void downloadFinished();              // 下载完成的信号
+    void downloadError(const QString& error);  // 下载错误的信号
+    void dataToSend(const QByteArray& data);   // 数据发送信号（用于线程池）
 };
 
 #endif // MYTCPSOCKET_H

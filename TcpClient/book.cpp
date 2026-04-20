@@ -60,30 +60,114 @@ Book::Book(QWidget *parent)
 
 }
 
+void Book::setThreadPool(ThreadPool *pool)
+{
+    m_threadPool = pool;
+}
+
 void Book::updateFileList(const PDU *pdu)
 {
     if(!pdu){
         return;
     }
 
-    FileInfo* file_info = NULL;
+    //旧版
 
-    //清楚原有的数据
-    bookList->clear();
-    //将客户端发送的pdu传到结构体上
-    for(int i = 0; i < pdu->uiMsglen/sizeof(FileInfo); i++){
+    // FileInfo* file_info = NULL;
 
-        file_info = (FileInfo*)pdu->caMsg + i;
+    // //清楚原有的数据
+    // bookList->clear();
+    // //将客户端发送的pdu传到结构体上
+    // for(int i = 0; i < pdu->uiMsglen/sizeof(FileInfo); i++){
 
-        //产生item对象
-        QListWidgetItem* item = new QListWidgetItem;
-        //设置图标
-        item->setIcon(QIcon(QPixmap(0 == file_info->fileType ? QString(":/icon/dir.jpg") : QString(":/icon/file.jpg"))));
-        item->setText(file_info->fileName);
-        //item输入到bookList上面
-        bookList->addItem(item);
+    //     file_info = (FileInfo*)pdu->caMsg + i;
+
+    //     //产生item对象
+    //     QListWidgetItem* item = new QListWidgetItem;
+    //     //设置图标
+    //     item->setIcon(QIcon(QPixmap(0 == file_info->fileType ? QString(":/icon/dir.jpg") : QString(":/icon/file.jpg"))));
+    //     item->setText(file_info->fileName);
+    //     //item输入到bookList上面
+    //     bookList->addItem(item);
+
+    // }
+
+    //调用线程池刷新
+    int file_count = pdu->uiMsglen / sizeof(FileInfo);
+
+    // ✅ 立即拷贝数据，不依赖 pdu 后续是否存活
+    QByteArray rawData((const char*)pdu->caMsg, pdu->uiMsglen);
+
+    // 判断是否使用线程池（文件数量多时才用，避免小文件时的开销）
+    bool use_threadPool = (m_threadPool != nullptr && file_count > 3);
+
+    if(use_threadPool){
+
+        m_threadPool->enqueue([this, rawData, file_count]() {
+
+            FileInfo* file_list = (FileInfo*)rawData.data();
+
+            struct ItemData{
+                QString fileName;
+                int fileType;
+            };
+
+            QList<ItemData> items;
+            //开辟内存
+            items.reserve(file_count);
+
+            //耗时操作
+            for(int i = 0; i < file_count; i++){
+
+                FileInfo* file_info = file_list + i;
+                ItemData item_data;
+                item_data.fileName = QString::fromUtf8(file_info->fileName);
+                item_data.fileType = file_info->fileType;
+                items.append(item_data);
+
+            }
+
+            //主线程更新,必须通过 invokeMethod 回到主线程更新UI
+            QMetaObject::invokeMethod(this, [this, items](){
+
+                bookList->clear();
+
+                for(const auto& item_data : items){
+
+                    QListWidgetItem* item = new QListWidgetItem;
+
+                    QString iconPath = (item_data.fileType == 0) ? ":/icon/dir.jpg" : ":/icon/file.jpg";
+                    item->setIcon(QIcon(iconPath));
+                    item->setText(item_data.fileName);
+                    // 存储文件类型，方便后续操作（如双击时判断是文件还是文件夹）
+                    item->setData(Qt::UserRole, item_data.fileType);
+
+                    bookList->addItem(item);
+                }
+            }, Qt::QueuedConnection);
+
+        });
 
     }
+
+    else{
+        // 文件较少，直接在主线程处理（原有逻辑）
+        bookList->clear();
+
+        for(int i = 0; i < file_count; i++) {
+            FileInfo* file_info = (FileInfo*)pdu->caMsg + i;
+
+            QListWidgetItem* item = new QListWidgetItem;
+            QString iconPath = (file_info->fileType == 0) ? ":/icon/dir.jpg" : ":/icon/file.jpg";
+            item->setIcon(QIcon(iconPath));
+            item->setText(QString::fromUtf8(file_info->fileName));
+            item->setData(Qt::UserRole, file_info->fileType);
+            bookList->addItem(item);
+        }
+
+    }
+
+
 }
 
 void Book::createDir()
@@ -409,6 +493,9 @@ void Book::handleDownloadComplete()
 {
     if(download_state == Receiving){
 
+        // ✅ 强制刷新缓冲区，确保数据写入磁盘
+        download_file.flush();
+
         download_file.close();
         download_state = Completed;
         QMessageBox::information(this, "下载", "文件下载成功！");
@@ -454,38 +541,10 @@ void Book::handleDownloadData(PDU *pdu)
 
     download_received += written;
 
+    qDebug() << "下载进度:" << download_received << "/" << download_total;
+
 }
 
-void Book::handleShareResponse(PDU *pdu)
-{
-    //获取文件路径
-    QString path = QString::fromUtf8((char*)pdu->caMsg);
-    //获取文件名
-    int lastSlash = path.lastIndexOf('/');
-    if(lastSlash > 0){
-        shareFileName = path.mid(lastSlash+1);
-    }
-    //通知消息
-    QString note = QString("%1 share file->%2 \n是否接收").arg(pdu->caData).arg(shareFileName);
-    //是否接收
-    int state = QMessageBox::question(this, "共享文件", note);
-    if(QMessageBox::Yes != state){
-
-        //不接收直接退出
-        return;
-    }
-    //回复客户端确认接收
-    QString recipient_name = TcpClient::getInstance().loginName;
-    PDU* res_pdu = makePDU(pdu->uiMsglen);
-    res_pdu->uiMsgType = ENUM_MSG_TYPE_FILE_SHARE_CONFIRM;
-    //拷贝路径和名字
-    memcpy(res_pdu->caMsg, pdu->caMsg, pdu->uiMsglen);
-    qstrncpy(res_pdu->caData, recipient_name.toUtf8().constData(), 64);
-
-    TcpClient::getInstance().getTcpSocket().write((char*)res_pdu, res_pdu->uiPDUlen);
-
-    delete res_pdu;
-}
 
 void Book::handleShareReceive()
 {
@@ -523,3 +582,36 @@ void Book::shareFile()
 
 
 }
+
+void Book::handleShareResponse(PDU *pdu)
+{
+    //服务器发送的inform_pdu
+    //获取文件路径
+    QString path = QString::fromUtf8((char*)pdu->caMsg);
+    //获取文件名
+    int lastSlash = path.lastIndexOf('/');
+    if(lastSlash > 0){
+        shareFileName = path.mid(lastSlash+1);
+    }
+    //通知消息
+    QString note = QString("%1 share file->%2 \n是否接收").arg(pdu->caData).arg(shareFileName);
+    //是否接收
+    int state = QMessageBox::question(this, "共享文件", note);
+    if(QMessageBox::Yes != state){
+
+        //不接收直接退出
+        return;
+    }
+    //回复客户端确认接收
+    QString recipient_name = TcpClient::getInstance().loginName;
+    PDU* res_pdu = makePDU(pdu->uiMsglen);
+    res_pdu->uiMsgType = ENUM_MSG_TYPE_FILE_SHARE_CONFIRM;
+    //拷贝路径和名字
+    memcpy(res_pdu->caMsg, pdu->caMsg, pdu->uiMsglen);
+    qstrncpy(res_pdu->caData, recipient_name.toUtf8().constData(), 64);
+
+    TcpClient::getInstance().getTcpSocket().write((char*)res_pdu, res_pdu->uiPDUlen);
+
+    delete res_pdu;
+}
+

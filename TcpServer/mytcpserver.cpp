@@ -1,8 +1,8 @@
 #include "mytcpserver.h"
 #include <QDebug>
 
-
-MyTcpServer::MyTcpServer()
+//创建十个线程
+MyTcpServer::MyTcpServer() : m_threadPool(10)
 {
 
 }
@@ -13,16 +13,29 @@ MyTcpServer &MyTcpServer::getInstance()
     return instance;
 }
 
- //每次建立连接都会调用这个函数
 void MyTcpServer::incomingConnection(qintptr socketDescriptor)
 {
-    //每当有新客户端连接到服务器时，自动创建一个专用的套接字对象来管理这个连接。
-    MyTcpSocket* p_tcpSocket = new MyTcpSocket();
-    p_tcpSocket->setSocketDescriptor(socketDescriptor);         // Qt 套接字对象接管一个已经存在的操作系统网络连接。
-    tcpSocketList.append(p_tcpSocket);                          //将信息添加到列表
+    qDebug() << "新客户端连接，描述符:" << socketDescriptor;
 
-    connect(p_tcpSocket, &MyTcpSocket::offline, this, &MyTcpServer::deleteSocket);
-    //connect(p_tcpSocket, SIGNAL(offline(MyTcpSocket*)), this, SLOT(deleteSocket(MyTcpSocket*)));    //建立连接,旧版写法
+    // ✅ 在主线程创建 socket
+    MyTcpSocket* p_tcpSocket = new MyTcpSocket();
+
+    if(p_tcpSocket->setSocketDescriptor(socketDescriptor)) {
+        qDebug() << "客户端连接成功";
+
+        // 线程池只用于文件传输等耗时操作
+        p_tcpSocket->setThreadPool(&m_threadPool);
+
+        {
+            std::lock_guard<std::mutex> lock(m_threadPool.getMutex());
+            tcpSocketList.append(p_tcpSocket);
+        }
+
+        connect(p_tcpSocket, &MyTcpSocket::offline,
+                this, &MyTcpServer::deleteSocket);
+    } else {
+        delete p_tcpSocket;
+    }
 }
 
 void MyTcpServer::transcation(const char *des_name, PDU* pdu)
@@ -62,4 +75,7 @@ void MyTcpServer::deleteSocket(MyTcpSocket *mySocket)
     // }
 }
 
+ThreadPool& MyTcpServer::getThreadPool(){
 
+    return m_threadPool;
+}

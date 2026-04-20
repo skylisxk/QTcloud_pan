@@ -8,6 +8,7 @@
 #include "protocol.h"
 #include "opewidget.h"
 #include "book.h"
+#include "threadpool.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -58,6 +59,9 @@ private:
 
     //连接服务器
     QTcpSocket tcpSocket;
+
+    //线程池
+    ThreadPool m_threadPool;
 
 };
 #endif // TCPCLIENT_H

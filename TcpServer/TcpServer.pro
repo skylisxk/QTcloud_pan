@@ -3,6 +3,8 @@ QT       += core gui network sql
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
 CONFIG += c++17
+QMAKE_CXXFLAGS += -pthread
+LIBS += -pthread
 
 # You can make your code fail to compile if it uses deprecated APIs.
 # In order to do so, uncomment the following line.
@@ -14,14 +16,16 @@ SOURCES += \
     mytcpsocket.cpp \
     operatedb.cpp \
     protocol.cpp \
-    tcpserver.cpp
+    tcpserver.cpp \
+    threadpool.cpp
 
 HEADERS += \
     mytcpserver.h \
     mytcpsocket.h \
     operatedb.h \
     protocol.h \
-    tcpserver.h
+    tcpserver.h \
+    threadpool.h
 
 FORMS += \
     tcpserver.ui

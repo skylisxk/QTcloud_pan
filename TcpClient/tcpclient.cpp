@@ -37,6 +37,7 @@
 TcpClient::TcpClient(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::TcpClient)
+    , m_threadPool(4)
 {
     ui->setupUi(this);
     loadConfig();
@@ -45,6 +46,7 @@ TcpClient::TcpClient(QWidget *parent)
     pFriend = nullptr;
     curPath = "./";
     rootPath = "./";
+
 
     //connect(&tcpSocket, SIGNAL(readyRead()), this, SLOT(receiveMsg()));                 //为received函数添加信号槽
     connect(&tcpSocket, &QTcpSocket::connected, this, &TcpClient::onConnected);
@@ -103,6 +105,9 @@ QTcpSocket &TcpClient::getTcpSocket()
 void TcpClient::receiveMsg()
 {
 
+    qDebug() << "=== receiveMsg 被调用 ===";
+
+
     unsigned int uiPDUlen = 0;                                  //总的长度
     tcpSocket.read((char*)&uiPDUlen, sizeof(unsigned int));     //将uint类型传入到uiPDUlen的第一个字符里面
 
@@ -147,6 +152,9 @@ void TcpClient::receiveMsg()
             book = OpeWidget::getInstance().getBook();
             pFriend = OpeWidget::getInstance().getFriend();
 
+            book->setThreadPool(&m_threadPool);
+            pFriend->setThreadPool(&m_threadPool);
+
             OpeWidget::getInstance().show();                        //跳转到成功后的窗口
             hide();
 
@@ -170,27 +178,26 @@ void TcpClient::receiveMsg()
         break;
     }
 
-    case ENUM_MSG_TYPE_ALL_ONLINE_RESPOND:{
+    case ENUM_MSG_TYPE_ALL_ONLINE_RESPOND:{                         //在线请求
 
-        OpeWidget::getInstance().getFriend()->showAllOnlineUsr(pdu);        //将pdu对象传入
-
+        pFriend->showAllOnlineUsr(pdu);
         break;
     }
 
-    case ENUM_MSG_TYPE_SEARCH_USR_RESPOND:{
+    case ENUM_MSG_TYPE_SEARCH_USR_RESPOND:{                         //搜索回复
 
         if(strcmp(SEARCH_USR_NO, pdu->caData) == 0){
 
-            QMessageBox::information(this, "搜索", QString("%1: 不存在").arg(OpeWidget::getInstance().getFriend()->searchName));
+            QMessageBox::information(this, "搜索", QString("%1: 不存在").arg(pFriend->searchName));
             break;
 
         }else if (strcmp(SEARCH_USR_OFFLINE, pdu->caData) == 0){
 
-            QMessageBox::information(this, "搜索", QString("%1: 不在线").arg(OpeWidget::getInstance().getFriend()->searchName));
+            QMessageBox::information(this, "搜索", QString("%1: 不在线").arg(pFriend->searchName));
             break;
         }
 
-        QMessageBox::information(this, "搜索", QString("%1: 在线").arg(OpeWidget::getInstance().getFriend()->searchName));
+        QMessageBox::information(this, "搜索", QString("%1: 在线").arg(pFriend->searchName));
 
         break;
     }
@@ -241,10 +248,9 @@ void TcpClient::receiveMsg()
         break;
     }
 
-
     case ENUM_MSG_TYPE_FLUSH_FRIEND_RESPOND:{                             //更新好友列表
 
-        OpeWidget::getInstance().getFriend()->updateFriendList(pdu);
+        pFriend->updateFriendList(pdu);
 
         break;
     }
@@ -266,7 +272,7 @@ void TcpClient::receiveMsg()
 
     case ENUM_MSG_TYPE_GROUP_CHAT_REQUEST:{                             //群聊请求
 
-        OpeWidget::getInstance().getFriend()->updateGroupMsg(pdu);
+        pFriend->updateGroupMsg(pdu);
         break;
     }
 
@@ -280,7 +286,7 @@ void TcpClient::receiveMsg()
 
         //将收到的信息打印在屏幕上
         //将数据添加到booklist
-        OpeWidget::getInstance().getBook()->updateFileList(pdu);
+        book->updateFileList(pdu);
         break;
     }
 
@@ -290,73 +296,73 @@ void TcpClient::receiveMsg()
         break;
     }
 
-    case ENUM_MSG_TYPE_RENAME_DIR_FILE_RESPOND:{
+    case ENUM_MSG_TYPE_RENAME_DIR_FILE_RESPOND:{                             //重命名
 
         QMessageBox::information(this, "重命名文件", pdu->caData);
-        OpeWidget::getInstance().getBook()->flushFile();
+        book->flushFile();
         break;
     }
 
-    case ENUM_MSG_TYPE_ENTER_DIR_RESPOND:{
+    case ENUM_MSG_TYPE_ENTER_DIR_RESPOND:{                                  //进入文件夹
 
         curPath = curPath + "/" + QString::fromUtf8(pdu->caData);
-        OpeWidget::getInstance().getBook()->updateFileList(pdu);
+        book->updateFileList(pdu);
         break;
     }
 
-    case ENUM_MSG_TYPE_UPLOAD_PROCESS:{
+    case ENUM_MSG_TYPE_UPLOAD_PROCESS:{                                     //上传处理
 
         QMessageBox::information(this, "上传文件", pdu->caData);
         break;
     }
 
-    case ENUM_MSG_TYPE_UPLOAD_FINISH:{
+    case ENUM_MSG_TYPE_UPLOAD_FINISH:{                                      //上传完成
 
         QMessageBox::information(this, "上传完成", pdu->caData);
 
-        OpeWidget::getInstance().getBook()->flushFile();
+        book->flushFile();
 
         QCoreApplication::processEvents();
         break;
     }
 
-    case ENUM_MSG_TYPE_DOWNLOAD_RESPOND:{
+    case ENUM_MSG_TYPE_DOWNLOAD_RESPOND:{                                   //下载回复
 
         book->handleDownloadRespond(pdu);
         break;
     }
 
-    case ENUM_MSG_TYPE_DOWNLOAD_ERROR:{
+    case ENUM_MSG_TYPE_DOWNLOAD_ERROR:{                                     //下载报错
 
         book->handleDownloadError(pdu);
         break;
     }
 
-    case ENUM_MSG_TYPE_DOWNLOAD_FINISH:{
+    case ENUM_MSG_TYPE_DOWNLOAD_FINISH:{                                    //下载完成
 
         book->handleDownloadComplete();
         break;
     }
 
-    case ENUM_MSG_TYPE_DOWNLOAD_PROCESS:{
+    case ENUM_MSG_TYPE_DOWNLOAD_PROCESS:{                                   //下载处理
 
         book->handleDownloadData(pdu);
         break;
     }
 
-    case ENUM_MSG_TYPE_FILE_SHARE_INFORM:{
+    case ENUM_MSG_TYPE_FILE_SHARE_INFORM:{                                  //分享通知
 
         book->handleShareResponse(pdu);
         break;
     }
 
-    case ENUM_MSG_TYPE_FILE_SHARE_DONE:{
+    case ENUM_MSG_TYPE_FILE_SHARE_DONE:{                                    //分享完成
 
         book->handleShareComplete();
         break;
     }
 
-    case ENUM_MSG_TYPE_FILE_SHARE_RESPOND:{
+    case ENUM_MSG_TYPE_FILE_SHARE_RESPOND:{                                 //分享回复
 
         book->handleShareReceive();
         break;
@@ -375,12 +381,14 @@ void TcpClient::receiveMsg()
 
 void TcpClient::onReadyRead()
 {
+    qDebug() << "onReadyRead 被调用，可用数据:" << tcpSocket.bytesAvailable() << "字节";
     receiveMsg();
 }
 
 void TcpClient::onConnected()
 {
     qDebug() << "成功连接到服务器";
+
 }
 
 void TcpClient::onDisconnected()
@@ -429,7 +437,6 @@ void TcpClient::on_regist_pb_clicked()
 
 void TcpClient::on_login_clicked()
 {
-
     QString name = ui->name_le->text();
     QString pwd = ui->pwd_le->text();
 
@@ -457,8 +464,6 @@ void TcpClient::on_login_clicked()
     free(pdu);
     pdu = NULL;
 }
-
-
 
 void TcpClient::on_logout_pb_clicked()
 {

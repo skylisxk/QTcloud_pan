@@ -9,7 +9,7 @@
 #include "protocol.h"
 #include <QTimer>
 #include <QFile>
-
+#include "threadpool.h"
 
 class Book : public QWidget
 {
@@ -38,6 +38,8 @@ public:
     void handleShareComplete();
 
     QString shareFileName;
+
+    void setThreadPool(ThreadPool* pool);
 signals:
 
 public slots:
@@ -64,6 +66,8 @@ private:
     qint64 download_total;         // 文件总大小
     qint64 download_received;      // 已接收大小
     FileDownloadState download_state;
+
+    ThreadPool* m_threadPool;
 
 };
 

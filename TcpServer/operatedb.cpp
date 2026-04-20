@@ -262,10 +262,10 @@ QStringList OperateDB::handleFlushFriend(const char *login_name)                
     QStringList list;
     if(!login_name) return list;
 
-    // 最佳方案：先找出用户ID，然后查询好友
+    //先找出用户ID，然后查询好友
     QSqlQuery query;
 
-    // 1. 获取登录用户的ID
+    //获取登录用户的ID
     int login_id = -1;
     query.prepare("SELECT id FROM usrInfo WHERE name = ?");
     query.addBindValue(login_name);
@@ -278,7 +278,7 @@ QStringList OperateDB::handleFlushFriend(const char *login_name)                
         return list;
     }
 
-    // 2. 查询所有好友（双向查询）
+    //查询所有好友
     QString sql = "SELECT u.name as friendName "
                   "FROM usrInfo u "
                   "WHERE u.id IN ("

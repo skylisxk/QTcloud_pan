@@ -7,6 +7,9 @@
 #include <QUrl>
 #include <QTimer>
 #include <QMessageBox>
+#include <QFile>
+#include <QThread>
+#include <QApplication>
 
 #define REGIST_DONE "reigst success"
 #define REGIST_FAIL "regist fail"
@@ -43,15 +46,55 @@ MyTcpSocket::MyTcpSocket(QObject *parent)
     download_file = NULL;
     download_total = 0;
     download_sent = 0;
+    m_threadPool = nullptr;
+    download_file = nullptr;
+
     //connect(this, SIGNAL(readyRead()), this, SLOT(receiveMsg()));
     connect(this, SIGNAL(disconnected()), this, SLOT(clientOffline()));
     connect(this, &QTcpSocket::readyRead, this, &MyTcpSocket::onReadyRead);
+
+    //线程的信号槽,这个槽在主线程中执行，安全地写入文件.在主线程中处理文件写入
+    connect(this, &MyTcpSocket::writeFileData, this, [this](const QByteArray& data){
+
+        qint64 written = q_file.write(data);
+        if(written == data.size()){
+
+            file_recve += written;
+            qDebug() << "进度:" << file_recve << "/" << file_recve_total;
+
+            if(file_recve >= file_recve_total){
+
+                handleUploadComplete();
+            }
+            else{
+
+                qDebug() << "写入文件失败";
+                handleUploadError();
+            }
+        }
+
+    }, Qt::QueuedConnection);
+
+    //上传信号槽
+    connect(this, &MyTcpSocket::uploadComplete, this, &MyTcpSocket::handleUploadComplete, Qt::QueuedConnection);
+    connect(this, &MyTcpSocket::uploadError, this, &MyTcpSocket::handleUploadError, Qt::QueuedConnection);
+
+    //下载
+    connect(this, &MyTcpSocket::nextChunk, this, &MyTcpSocket::sendNextChunk, Qt::QueuedConnection);
+    connect(this, &MyTcpSocket::downloadFinished, this, &MyTcpSocket::finishDownload, Qt::QueuedConnection);
+    connect(this, &MyTcpSocket::downloadError, this, &MyTcpSocket::handleDownloadError, Qt::QueuedConnection);
+    connect(this, &MyTcpSocket::dataToSend, this, &::MyTcpSocket::onDataToSend, Qt::QueuedConnection);
 
 }
 
 QString MyTcpSocket::getName()
 {
     return strName;
+}
+
+void MyTcpSocket::setThreadPool(ThreadPool *pool)
+{
+    m_threadPool = pool;
 }
 
 void MyTcpSocket::receiveMsg()
@@ -281,20 +324,32 @@ void MyTcpSocket::receiveMsg()
     }
 
     case ENUM_MSG_TYPE_FLUSH_FRIEND_REQUEST:{                               //刷新好友列表
-
+        //获取当前用户名称
         char login_name[32] = {'\0'};
         qstrncpy(login_name, pdu->caData, 32);
-
+        //获取好友列表，调用数据库
         QStringList list = OperateDB::getInstance().handleFlushFriend(login_name);
-        unsigned int uiMsgLen = list.size() * 32;
 
+        if(list.isEmpty()) {
+            // 没有好友，发送空列表
+            PDU* res_pdu = makePDU();
+            res_pdu->uiMsgType = ENUM_MSG_TYPE_FLUSH_FRIEND_RESPOND;
+            write((char*)res_pdu, res_pdu->uiPDUlen);
+            delete res_pdu;
+            break;
+        }
+
+        unsigned int uiMsgLen = list.size() * 32;
+        //pdu发送这个列表
         PDU* res_pdu = makePDU(uiMsgLen);
         res_pdu->uiMsgType = ENUM_MSG_TYPE_FLUSH_FRIEND_RESPOND;
 
         for(int i = 0; i < list.size(); i++){
 
-            //把名字拷贝进去
-            memcpy((char*)(res_pdu->caMsg) + i * 32, list.at(i).toStdString().c_str(), list.at(i).size());
+            //把名字拷贝进去 确保填满32字节，不足的用\0补齐
+            QByteArray nameData = list.at(i).toUtf8();
+            int copyLen = qMin(nameData.size(), 31);        // 最多31字节，留1字节给\0
+            memcpy((char*)(res_pdu->caMsg) + i * 32, nameData.constData(), copyLen);
         }
 
         write((char*)res_pdu, res_pdu->uiPDUlen);
@@ -404,28 +459,89 @@ void MyTcpSocket::receiveMsg()
         QString dir_name = QString::fromUtf8(pdu->caData);
         QString path = QString::fromUtf8((char*)pdu->caMsg) + "/" + dir_name;
 
-        //使用QFileInfo
-        QFileInfo file_info(path);
+        /**********************多线程**************************/
+        // //使用QFileInfo
+        // QFileInfo file_info(path);
 
-        //判断是否删除成功
-        bool is_delete = false;
-        QDir dir;
+        // //判断是否删除成功
+        // bool is_delete = false;
+        // QDir dir;
 
-        if(file_info.isDir()){
+        // if(file_info.isDir()){
 
-            dir.setPath(path);
-            //删除文件夹里面所有的文件
-            is_delete = dir.removeRecursively();
+        //     dir.setPath(path);
+        //     //删除文件夹里面所有的文件
+        //     is_delete = dir.removeRecursively();
+        // }
+        // else if(file_info.isFile()){
+
+        //     //删除单个文件
+        //     dir.setPath(QString::fromUtf8((char*)pdu->caMsg));
+        //     is_delete = dir.remove(dir_name);
+        // }
+
+        // PDU* res_pdu = makePDU();
+        // addHelper(res_pdu, is_delete ? DIR_FILE_DELETE_DONE : DIR_FILE_DELETE_FAIL, ENUM_MSG_TYPE_DELETE_DIR_FILE_RESPOND);
+        // break;
+
+        if(m_threadPool){
+
+            m_threadPool->enqueue([this, dir_name, path](){
+
+                QFileInfo file_info(path);
+
+                bool is_delete = false;
+                QDir dir;
+
+                if(file_info.isDir()){
+
+                    dir.setPath(path);
+                    // 耗时操作在线程池执行
+                    is_delete = dir.removeRecursively();
+                }
+                else if(file_info.isFile()) {
+                    dir.setPath(QFileInfo(path).path());
+                    is_delete = dir.remove(file_info.fileName());
+                }
+
+                // 回到主线程发送响应
+                QMetaObject::invokeMethod(this, [this, is_delete](){
+
+                    PDU* res_pdu = makePDU();
+                    addHelper(res_pdu, is_delete ? DIR_FILE_DELETE_DONE : DIR_FILE_DELETE_FAIL, ENUM_MSG_TYPE_DELETE_DIR_FILE_RESPOND);
+
+                }, Qt::QueuedConnection);
+
+            });
+
         }
-        else if(file_info.isFile()){
 
-            //删除单个文件
-            dir.setPath(QString::fromUtf8((char*)pdu->caMsg));
-            is_delete = dir.remove(dir_name);
+        else{
+
+            //使用QFileInfo
+            QFileInfo file_info(path);
+
+            //判断是否删除成功
+            bool is_delete = false;
+            QDir dir;
+
+            if(file_info.isDir()){
+
+                dir.setPath(path);
+                //删除文件夹里面所有的文件
+                is_delete = dir.removeRecursively();
+            }
+            else if(file_info.isFile()){
+
+                //删除单个文件
+                dir.setPath(QString::fromUtf8((char*)pdu->caMsg));
+                is_delete = dir.remove(dir_name);
+            }
+
+            PDU* res_pdu = makePDU();
+            addHelper(res_pdu, is_delete ? DIR_FILE_DELETE_DONE : DIR_FILE_DELETE_FAIL, ENUM_MSG_TYPE_DELETE_DIR_FILE_RESPOND);
+
         }
-
-        PDU* res_pdu = makePDU();
-        addHelper(res_pdu, is_delete ? DIR_FILE_DELETE_DONE : DIR_FILE_DELETE_FAIL, ENUM_MSG_TYPE_DELETE_DIR_FILE_RESPOND);
         break;
     }
 
@@ -660,8 +776,13 @@ void MyTcpSocket::onReadyRead()
     while(bytesAvailable() > 0) {
         // 情况1：正在接收文件数据
         if(upload_state == Receiving) {
+            // ✅ 注意：handleUploadData 现在是异步的（可能在线程池中执行）
+            // 但它会立即返回，不会阻塞
             handleUploadData();
-            // 处理完可能的数据后继续循环，因为可能有多个数据包
+
+            // ✅ 重要：处理完可能的数据后继续循环
+            // 但需要避免在数据还没读完时，线程池还没处理完旧数据
+            // 这里继续循环是安全的，因为 handleUploadData 会立即返回
             continue;
         }
 
@@ -677,6 +798,7 @@ void MyTcpSocket::onReadyRead()
         }
 
         // 情况3：其他状态（Preparing等），不应该有数据
+        qDebug() << "警告：未知状态，但有数据";
         break;
     }
 }
@@ -694,6 +816,7 @@ void MyTcpSocket::handleUploadData()
 
     qDebug() << "收到文件数据:" << buffer.size() << "字节";
 
+    /*原版没有线程池*/
     qint64 written = q_file.write(buffer);
     if(written != buffer.size()) {
         qDebug() << "写入文件失败";
@@ -711,6 +834,38 @@ void MyTcpSocket::handleUploadData()
         // ✅ 使用定时器延迟执行，避免在当前调用栈中处理
         QTimer::singleShot(0, this, &MyTcpSocket::handleUploadComplete);
     }
+
+    // // ✅ 如果线程池存在，将写文件操作交给线程池
+    // if(m_threadPool){
+
+    //     //在后台线程中只负责"发送信号"，不直接操作文件
+    //     m_threadPool->enqueue([this, buffer](){
+
+    //         // 通过信号将数据发送回主线程写入文件
+    //         emit writeFileData(buffer);
+    //         qDebug() << "数据已发送到主线程";
+
+    //     });
+    // }
+    // else{
+    //     // 没有线程池，直接处理（原有逻辑）
+    //     qint64 written = q_file.write(buffer);
+    //     if(written != buffer.size()) {
+    //         qDebug() << "写入文件失败";
+    //         handleUploadError();
+    //         return;
+    //     }
+
+
+    //     file_recve += written;
+    //     qDebug() << "进度:" << file_recve << "/" << file_recve_total;
+
+    //     if(file_recve >= file_recve_total) {
+    //         qDebug() << "文件接收完成";
+    //         QTimer::singleShot(0, this, &MyTcpSocket::handleUploadComplete);
+    //     }
+    // }
+
 }
 
 bool MyTcpSocket::tryParsePDU()
@@ -814,6 +969,7 @@ void MyTcpSocket::handleDownloadRequest(PDU *pdu)
 
         handleDownloadError("open failed");
         delete download_file;
+        download_file = nullptr;
         return;
     }
 
@@ -856,73 +1012,169 @@ void MyTcpSocket::sendNextChunk()
         return;
     }
 
-    char buffer[4096];
-    qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
+    /********************************使用线程池*************************************/
 
-    if(bytes_read > 0){
+    // char buffer[4096];
+    // qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
 
-        // 创建数据PDU,将文件数据考进去
-        PDU* data_pdu = makePDU(bytes_read);
-        data_pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_PROCESS;
-        memcpy(data_pdu->caMsg, buffer, bytes_read);
+    // if(bytes_read > 0){
 
-        qint64 bytes_sent = write((char*)data_pdu, data_pdu->uiPDUlen);
+    //     // 创建数据PDU,将文件数据考进去
+    //     PDU* data_pdu = makePDU(bytes_read);
+    //     data_pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_PROCESS;
+    //     memcpy(data_pdu->caMsg, buffer, bytes_read);
 
-        //发送成功时
-        if(bytes_sent == data_pdu->uiPDUlen){
+    //     qint64 bytes_sent = write((char*)data_pdu, data_pdu->uiPDUlen);
 
-            download_sent += bytes_read;
-            flush();
+    //     //发送成功时
+    //     if(bytes_sent == data_pdu->uiPDUlen){
 
-            //发送下一块
-            QTimer::singleShot(10, this, &MyTcpSocket::sendNextChunk);
-        }
-        else {
-            qDebug() << "发送失败";
-            handleDownloadError("send failed");
-        }
+    //         download_sent += bytes_read;
+    //         flush();
 
-        delete data_pdu;
+    //         //发送下一块
+    //         QTimer::singleShot(10, this, &MyTcpSocket::sendNextChunk);
+    //     }
+    //     else {
+    //         qDebug() << "发送失败";
+    //         handleDownloadError("send failed");
+    //     }
+
+    //     delete data_pdu;
+    // }
+    // else {
+    //     qDebug() << "读取文件失败";
+    //     handleDownloadError("read failed");
+    // }
+
+
+
+    // ✅ 如果有线程池，将文件读取和发送交给线程池
+    if(m_threadPool) {
+        // ✅ 线程池只做文件读取，不操作 socket
+        m_threadPool->enqueue([this]() {
+            char buffer[4096];
+            qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
+
+            if(bytes_read > 0) {
+                // 将数据打包发送回主线程
+                QByteArray data(buffer, bytes_read);
+                emit dataToSend(data);
+                qDebug() << "线程池读取数据:" << bytes_read << "字节";
+            } else if(bytes_read == 0) {
+                emit downloadFinished();
+            } else {
+                emit downloadError("read failed");
+            }
+        });
     }
+
     else {
-        qDebug() << "读取文件失败";
-        handleDownloadError("read failed");
+        // 没有线程池，使用原有逻辑
+        char buffer[4096];
+        qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
+
+        if(bytes_read > 0) {
+            PDU* data_pdu = makePDU(bytes_read);
+            data_pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_PROCESS;
+            memcpy(data_pdu->caMsg, buffer, bytes_read);
+
+            qint64 bytes_sent = write((char*)data_pdu, data_pdu->uiPDUlen);
+
+            if(bytes_sent == data_pdu->uiPDUlen) {
+                download_sent += bytes_read;
+                flush();
+                QTimer::singleShot(10, this, &MyTcpSocket::sendNextChunk);
+            } else {
+                qDebug() << "发送失败";
+                handleDownloadError("send failed");
+            }
+
+            delete data_pdu;
+        } else {
+            qDebug() << "读取文件失败";
+            handleDownloadError("read failed");
+        }
     }
 
 }
 
 void MyTcpSocket::finishDownload()
 {
-    if(download_file){
-    download_file->close();
-    download_file = NULL;
+    qDebug() << "下载完成，总发送:" << download_sent.load();
+
+    if(download_file) {
+        download_file->close();
+        delete download_file;
+        download_file = nullptr;
     }
 
-    PDU* finish_pdu = makePDU();
+    // 发送完成通知给客户端
+    PDU* finish_pdu = makePDU(0);
     addHelper(finish_pdu, "download finish", ENUM_MSG_TYPE_DOWNLOAD_FINISH);
     delete finish_pdu;
+
     download_state = d_idle;
+    download_sent = 0;
+    download_total = 0;
 }
 
 void MyTcpSocket::handleDownloadError(const QString &error)
 {
-    //文件关闭
-    if(download_file){
+    qDebug() << "下载错误:" << error;
 
+    if(download_file) {
         download_file->close();
-        download_file = NULL;
+        delete download_file;
+        download_file = nullptr;
     }
-    PDU* err_pdu = makePDU();
+
+    // 发送错误通知给客户端
+    PDU* err_pdu = makePDU(0);
     addHelper(err_pdu, error.toStdString().c_str(), ENUM_MSG_TYPE_DOWNLOAD_ERROR);
     delete err_pdu;
+
     download_state = d_idle;
+    download_sent = 0;
+    download_total = 0;
+}
+
+void MyTcpSocket::onDataToSend(const QByteArray &data)
+{
+    // ✅ 这个函数在主线程执行，可以安全操作 socket
+    if(download_state != d_receiving) {
+        qDebug() << "onDataToSend: 状态错误";
+        return;
+    }
+
+    // 创建数据PDU
+    PDU* data_pdu = makePDU(data.size());
+    data_pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_PROCESS;
+    memcpy(data_pdu->caMsg, data.data(), data.size());
+
+    qint64 total_len = data_pdu->uiPDUlen;
+    qint64 bytes_sent = write((char*)data_pdu, total_len);
+
+    if(bytes_sent == total_len) {
+        download_sent += data.size();
+        flush();
+
+        qDebug() << "发送进度:" << download_sent.load() << "/" << download_total.load();
+
+        // 继续发送下一块（通过信号，避免直接递归调用）
+        emit nextChunk();
+    } else {
+        emit downloadError("send failed");
+    }
+
+    delete data_pdu;
 }
 
 /*-----------------------------------------------------------------------------------------------*/
 void MyTcpSocket::handleShareFile(PDU *pdu)
 {
 
-    //解析caData
+    //解析caData，存放的是分享者，接收者数量
     QStringList parts = QString::fromUtf8(pdu->caData).split('|');
 
     if(parts.size() < 2){
@@ -942,7 +1194,7 @@ void MyTcpSocket::handleShareFile(PDU *pdu)
     qstrncpy(inform_pdu->caData, sender.toUtf8().constData(), 64);
     memcpy((char*)inform_pdu->caMsg, (char*)pdu->caMsg + offset, pdu->uiMsglen - offset);
 
-    //解析caMsg
+    //解析caMsg，获得接受者名字并转发出去
     char recipient_name[32] = {'\0'};
     for(int i = 0; i < recipient_num; i++){
 
@@ -959,11 +1211,9 @@ void MyTcpSocket::handleShareFile(PDU *pdu)
 
 }
 
-
-
 void MyTcpSocket::handleShareConfirm(PDU *pdu)
 {
-
+    //客户端确认接收分享
     QString share_path = QString::fromUtf8((char*)pdu->caMsg);
 
     //获得文件名
@@ -974,57 +1224,110 @@ void MyTcpSocket::handleShareConfirm(PDU *pdu)
     QString recipient_name = QString::fromUtf8(pdu->caData);
     QString recipient_path = QString("./%1").arg(recipient_name) + '/' + file_name;
 
-    //判断是否为文件
-    QFileInfo file_info(share_path);
-    if(file_info.isFile()){
+    /************************************多线程********************************/
 
-        //使用静态函数拷贝,把share的拷贝到recipient
-        QFile::copy(share_path, recipient_path);
+    // //判断是否为文件
+    // QFileInfo file_info(share_path);
+    // if(file_info.isFile()){
+
+    //     //使用静态函数拷贝,把share的拷贝到recipient
+    //     QFile::copy(share_path, recipient_path);
+    // }
+    // //如果是文件夹
+    // else if(file_info.isDir()){
+
+    //     handleShareDirCopy(share_path, recipient_path);
+    // }
+    // //拷贝完成，发送给服务器
+    // PDU* res_pdu = makePDU();
+    // addHelper(res_pdu, "share complete", ENUM_MSG_TYPE_FILE_SHARE_DONE);
+    // delete res_pdu;
+
+    if(m_threadPool){
+
+        //避免share_path被销毁，因为lambda表达式可能在函数结束后调用
+        QString src_path = share_path;
+        QString dst_path = recipient_path;
+
+        m_threadPool->enqueue([this, src_path, dst_path](){
+
+            QFileInfo file_info(src_path);
+
+            if(file_info.isFile()){
+
+                QFile::copy(src_path, dst_path);
+
+            }
+
+            else if(file_info.isDir()){
+
+                handleShareDirCopy(src_path, dst_path);
+            }
+
+            //主线发送
+            QMetaObject::invokeMethod(this, [this](){
+
+                PDU* res_pdu = makePDU();
+                addHelper(res_pdu, "share complete", ENUM_MSG_TYPE_FILE_SHARE_DONE);
+                delete res_pdu;
+
+            }, Qt::QueuedConnection);
+
+        });
+
     }
-    //如果是文件夹
-    else if(file_info.isDir()){
 
-        handleShareDirCopy(share_path, recipient_path);
+    else{
+
+        //判断是否为文件
+        QFileInfo file_info(share_path);
+        if(file_info.isFile()){
+
+            //使用静态函数拷贝,把share的拷贝到recipient
+            QFile::copy(share_path, recipient_path);
+        }
+        //如果是文件夹
+        else if(file_info.isDir()){
+
+            handleShareDirCopy(share_path, recipient_path);
+        }
+        //拷贝完成，发送给服务器
+        PDU* res_pdu = makePDU();
+        addHelper(res_pdu, "share complete", ENUM_MSG_TYPE_FILE_SHARE_DONE);
+        delete res_pdu;
     }
 
-    PDU* res_pdu = makePDU();
-    addHelper(res_pdu, "share complete", ENUM_MSG_TYPE_FILE_SHARE_DONE);
-    delete res_pdu;
 }
 
 void MyTcpSocket::handleShareDirCopy(QString dir_src, QString dir_des)
 {
-    //将src拷贝到des去
     QDir dir;
-    dir.mkdir(dir_des);
+
+    // 1. 创建目标目录（使用 mkpath 而不是 mkdir）
+    if(!dir.mkpath(dir_des)) {
+        qDebug() << "创建目录失败:" << dir_des;
+        return;
+    }
+
+    // 2. 获取源目录内容（排除 . 和 ..）
     dir.setPath(dir_src);
+    QFileInfoList file_list = dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
 
-    //获取目录文件信息
-    QFileInfoList file_list = dir.entryInfoList();
-    for(auto &ele : file_list){
+    // 3. 逐个拷贝
+    for(const auto& ele : file_list) {
+        QString srcPath = dir_src + '/' + ele.fileName();
+        QString dstPath = dir_des + '/' + ele.fileName();
 
-        //如果是文件
-        if(ele.isFile()){
-
-            //获取文件名,拷贝到des目录
-            QFile::copy(dir_src + '/' + ele.fileName(),
-                        dir_des + '/' + ele.fileName());
-        }
-
-        //如果是文件夹
-        else if(ele.isDir()){
-
-            //如果是.目录就跳过
-            if(QString(".") == ele.fileName()
-                || QString("..") == ele.fileName()){
-
-                continue;
+        if(ele.isFile()) {
+            if(!QFile::copy(srcPath, dstPath)) {
+                qDebug() << "拷贝文件失败:" << srcPath;
+                // 继续拷贝其他文件，不中断
             }
-
-            //递归调用该函数
-            handleShareDirCopy(dir_src + '/' + ele.fileName(),
-                                dir_des + '/' + ele.fileName());
+        } else if(ele.isDir()) {
+            // 递归拷贝子目录
+            handleShareDirCopy(srcPath, dstPath);
         }
     }
 }
+
 

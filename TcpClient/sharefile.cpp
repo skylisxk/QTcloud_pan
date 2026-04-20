@@ -104,6 +104,7 @@ void ShareFile::selectAll()
 
 void ShareFile::selectConfirm()
 {
+    //点击确认后开始发送
     TcpClient& tcp_instance = TcpClient::getInstance();
     QString sender = tcp_instance.loginName;
     QString share_file_name = OpeWidget::getInstance().getBook()->shareFileName;
@@ -127,7 +128,7 @@ void ShareFile::selectConfirm()
     PDU* pdu = makePDU(total_msg_len);
     pdu->uiMsgType = ENUM_MSG_TYPE_FILE_SHARE_REQUEST;
 
-    //分享者，接收者数量caData,路径+文件名,接受者msg
+    //分享者，接收者数量caData,路径+文件名和接受者msg
     sprintf(pdu->caData, "%s|%d", sender.toStdString().c_str(), recipient_num);
     //循环放置接收者
     int offset = 0;
@@ -145,7 +146,7 @@ void ShareFile::selectConfirm()
     // 在接收者列表后面放置文件路径
     char* path_pos = (char*)pdu->caMsg + recipient_bytes;
     qstrncpy(path_pos, cur_path.toUtf8().constData(), path_bytes);
-
+    //确认接收后再次发送给服务器
     tcp_instance.getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
 
     delete pdu;

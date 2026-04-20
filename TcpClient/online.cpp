@@ -21,7 +21,7 @@ void Online::showUsr(PDU *pdu)
         return;
     }
 
-    //提取pdu数据
+    //提取pdu数据,包含所有在线的用户
     char tp[32];
     unsigned int uiSize = pdu->uiMsglen / 32;
 

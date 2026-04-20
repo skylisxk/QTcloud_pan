@@ -1,0 +1,4 @@
+不行，服务器提示：QSocketNotifier: Socket notifiers cannot be enabled or disabled from another thread
+QSocketNotifier: Socket notifiers cannot be enabled or disabled from another thread
+发送进度: 4096 / 212014
+QMetaObject::invokeMethod: No such method MyTcpSocket::sendNextChunk()
