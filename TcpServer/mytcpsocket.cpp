@@ -53,37 +53,11 @@ MyTcpSocket::MyTcpSocket(QObject *parent)
     connect(this, SIGNAL(disconnected()), this, SLOT(clientOffline()));
     connect(this, &QTcpSocket::readyRead, this, &MyTcpSocket::onReadyRead);
 
-    //线程的信号槽,这个槽在主线程中执行，安全地写入文件.在主线程中处理文件写入
-    connect(this, &MyTcpSocket::writeFileData, this, [this](const QByteArray& data){
-
-        qint64 written = q_file.write(data);
-        if(written == data.size()){
-
-            file_recve += written;
-            qDebug() << "进度:" << file_recve << "/" << file_recve_total;
-
-            if(file_recve >= file_recve_total){
-
-                handleUploadComplete();
-            }
-            else{
-
-                qDebug() << "写入文件失败";
-                handleUploadError();
-            }
-        }
-
-    }, Qt::QueuedConnection);
 
     //上传信号槽
     connect(this, &MyTcpSocket::uploadComplete, this, &MyTcpSocket::handleUploadComplete, Qt::QueuedConnection);
     connect(this, &MyTcpSocket::uploadError, this, &MyTcpSocket::handleUploadError, Qt::QueuedConnection);
 
-    //下载
-    connect(this, &MyTcpSocket::nextChunk, this, &MyTcpSocket::sendNextChunk, Qt::QueuedConnection);
-    connect(this, &MyTcpSocket::downloadFinished, this, &MyTcpSocket::finishDownload, Qt::QueuedConnection);
-    connect(this, &MyTcpSocket::downloadError, this, &MyTcpSocket::handleDownloadError, Qt::QueuedConnection);
-    connect(this, &MyTcpSocket::dataToSend, this, &::MyTcpSocket::onDataToSend, Qt::QueuedConnection);
 
 }
 
@@ -99,7 +73,7 @@ void MyTcpSocket::setThreadPool(ThreadPool *pool)
 
 void MyTcpSocket::receiveMsg()
 {
-    // ✅ 安全检查：正在上传文件时不处理协议消息
+    // 安全检查：正在上传文件时不处理协议消息
     if(upload_state != Idle) {
         qDebug() << "错误：非空闲状态进入 receiveMsg";
         return;
@@ -774,31 +748,31 @@ void MyTcpSocket::onReadyRead()
 {
     // 只要还有数据，就循环处理
     while(bytesAvailable() > 0) {
-        // 情况1：正在接收文件数据
+        // 正在接收文件数据
         if(upload_state == Receiving) {
-            // ✅ 注意：handleUploadData 现在是异步的（可能在线程池中执行）
+            // handleUploadData 现在是异步的（可能在线程池中执行）
             // 但它会立即返回，不会阻塞
             handleUploadData();
 
-            // ✅ 重要：处理完可能的数据后继续循环
+            // 处理完可能的数据后继续循环
             // 但需要避免在数据还没读完时，线程池还没处理完旧数据
             // 这里继续循环是安全的，因为 handleUploadData 会立即返回
             continue;
         }
 
-        // 情况2：空闲状态，处理协议消息
+        //空闲状态，处理协议消息
         if(upload_state == Idle) {
             // 尝试解析PDU
             if(!tryParsePDU()) {
-                // 无法解析PDU，可能是数据不完整，等待下一次
+                //无法解析PDU，可能是数据不完整，等待下一次
                 break;
             }
-            // 解析成功，继续循环处理可能的下一个PDU
+            //解析成功，继续循环处理可能的下一个PDU
             continue;
         }
 
-        // 情况3：其他状态（Preparing等），不应该有数据
-        qDebug() << "警告：未知状态，但有数据";
+        //其他状态（Preparing等），不应该有数据
+        qDebug() << "未知状态，但有数据";
         break;
     }
 }
@@ -831,40 +805,9 @@ void MyTcpSocket::handleUploadData()
     if(file_recve >= file_recve_total) {
         qDebug() << "文件接收完成，准备调用handleUploadComplete";
 
-        // ✅ 使用定时器延迟执行，避免在当前调用栈中处理
+        // 使用定时器延迟执行，避免在当前调用栈中处理
         QTimer::singleShot(0, this, &MyTcpSocket::handleUploadComplete);
     }
-
-    // // ✅ 如果线程池存在，将写文件操作交给线程池
-    // if(m_threadPool){
-
-    //     //在后台线程中只负责"发送信号"，不直接操作文件
-    //     m_threadPool->enqueue([this, buffer](){
-
-    //         // 通过信号将数据发送回主线程写入文件
-    //         emit writeFileData(buffer);
-    //         qDebug() << "数据已发送到主线程";
-
-    //     });
-    // }
-    // else{
-    //     // 没有线程池，直接处理（原有逻辑）
-    //     qint64 written = q_file.write(buffer);
-    //     if(written != buffer.size()) {
-    //         qDebug() << "写入文件失败";
-    //         handleUploadError();
-    //         return;
-    //     }
-
-
-    //     file_recve += written;
-    //     qDebug() << "进度:" << file_recve << "/" << file_recve_total;
-
-    //     if(file_recve >= file_recve_total) {
-    //         qDebug() << "文件接收完成";
-    //         QTimer::singleShot(0, this, &MyTcpSocket::handleUploadComplete);
-    //     }
-    // }
 
 }
 
@@ -990,7 +933,7 @@ void MyTcpSocket::handleDownloadRequest(PDU *pdu)
     delete res_pdu;
 
     //服务器分块发送文件数据
-    QTimer::singleShot(10, this, &MyTcpSocket::sendNextChunk);
+    QTimer::singleShot(1, this, &MyTcpSocket::sendNextChunk);
 }
 
 void MyTcpSocket::sendNextChunk()
@@ -1012,96 +955,37 @@ void MyTcpSocket::sendNextChunk()
         return;
     }
 
-    /********************************使用线程池*************************************/
+    char buffer[64*1024];
+    qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
 
-    // char buffer[4096];
-    // qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
+    if(bytes_read > 0) {
+        PDU* data_pdu = makePDU(bytes_read);
+        data_pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_PROCESS;
+        memcpy(data_pdu->caMsg, buffer, bytes_read);
 
-    // if(bytes_read > 0){
+        qint64 bytes_sent = write((char*)data_pdu, data_pdu->uiPDUlen);
 
-    //     // 创建数据PDU,将文件数据考进去
-    //     PDU* data_pdu = makePDU(bytes_read);
-    //     data_pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_PROCESS;
-    //     memcpy(data_pdu->caMsg, buffer, bytes_read);
-
-    //     qint64 bytes_sent = write((char*)data_pdu, data_pdu->uiPDUlen);
-
-    //     //发送成功时
-    //     if(bytes_sent == data_pdu->uiPDUlen){
-
-    //         download_sent += bytes_read;
-    //         flush();
-
-    //         //发送下一块
-    //         QTimer::singleShot(10, this, &MyTcpSocket::sendNextChunk);
-    //     }
-    //     else {
-    //         qDebug() << "发送失败";
-    //         handleDownloadError("send failed");
-    //     }
-
-    //     delete data_pdu;
-    // }
-    // else {
-    //     qDebug() << "读取文件失败";
-    //     handleDownloadError("read failed");
-    // }
-
-
-
-    // ✅ 如果有线程池，将文件读取和发送交给线程池
-    if(m_threadPool) {
-        // ✅ 线程池只做文件读取，不操作 socket
-        m_threadPool->enqueue([this]() {
-            char buffer[4096];
-            qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
-
-            if(bytes_read > 0) {
-                // 将数据打包发送回主线程
-                QByteArray data(buffer, bytes_read);
-                emit dataToSend(data);
-                qDebug() << "线程池读取数据:" << bytes_read << "字节";
-            } else if(bytes_read == 0) {
-                emit downloadFinished();
-            } else {
-                emit downloadError("read failed");
-            }
-        });
-    }
-
-    else {
-        // 没有线程池，使用原有逻辑
-        char buffer[4096];
-        qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
-
-        if(bytes_read > 0) {
-            PDU* data_pdu = makePDU(bytes_read);
-            data_pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_PROCESS;
-            memcpy(data_pdu->caMsg, buffer, bytes_read);
-
-            qint64 bytes_sent = write((char*)data_pdu, data_pdu->uiPDUlen);
-
-            if(bytes_sent == data_pdu->uiPDUlen) {
-                download_sent += bytes_read;
-                flush();
-                QTimer::singleShot(10, this, &MyTcpSocket::sendNextChunk);
-            } else {
-                qDebug() << "发送失败";
-                handleDownloadError("send failed");
-            }
-
-            delete data_pdu;
+        if(bytes_sent == data_pdu->uiPDUlen) {
+            download_sent += bytes_read;
+            flush();
+            QTimer::singleShot(10, this, &MyTcpSocket::sendNextChunk);
         } else {
-            qDebug() << "读取文件失败";
-            handleDownloadError("read failed");
+            qDebug() << "发送失败";
+            handleDownloadError("send failed");
         }
+
+        delete data_pdu;
+    } else {
+        qDebug() << "读取文件失败";
+        handleDownloadError("read failed");
     }
+
 
 }
 
+
 void MyTcpSocket::finishDownload()
 {
-    qDebug() << "下载完成，总发送:" << download_sent.load();
 
     if(download_file) {
         download_file->close();
@@ -1139,36 +1023,6 @@ void MyTcpSocket::handleDownloadError(const QString &error)
     download_total = 0;
 }
 
-void MyTcpSocket::onDataToSend(const QByteArray &data)
-{
-    // ✅ 这个函数在主线程执行，可以安全操作 socket
-    if(download_state != d_receiving) {
-        qDebug() << "onDataToSend: 状态错误";
-        return;
-    }
-
-    // 创建数据PDU
-    PDU* data_pdu = makePDU(data.size());
-    data_pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_PROCESS;
-    memcpy(data_pdu->caMsg, data.data(), data.size());
-
-    qint64 total_len = data_pdu->uiPDUlen;
-    qint64 bytes_sent = write((char*)data_pdu, total_len);
-
-    if(bytes_sent == total_len) {
-        download_sent += data.size();
-        flush();
-
-        qDebug() << "发送进度:" << download_sent.load() << "/" << download_total.load();
-
-        // 继续发送下一块（通过信号，避免直接递归调用）
-        emit nextChunk();
-    } else {
-        emit downloadError("send failed");
-    }
-
-    delete data_pdu;
-}
 
 /*-----------------------------------------------------------------------------------------------*/
 void MyTcpSocket::handleShareFile(PDU *pdu)

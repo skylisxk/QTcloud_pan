@@ -18,6 +18,7 @@ SOURCES += \
     online.cpp \
     opewidget.cpp \
     privatechat.cpp \
+    progressdialog.cpp \
     protocol.cpp \
     sharefile.cpp \
     tcpclient.cpp \
@@ -29,6 +30,7 @@ HEADERS += \
     online.h \
     opewidget.h \
     privatechat.h \
+    progressdialog.h \
     protocol.h \
     sharefile.h \
     tcpclient.h \

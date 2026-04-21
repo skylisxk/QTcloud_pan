@@ -46,6 +46,9 @@ Book::Book(QWidget *parent)
     download_total = 0;
     download_received = 0;
 
+    m_threadPool = nullptr;
+    m_progressDialog = nullptr;
+
     //关联信号槽
     connect(createPB, &QAbstractButton::clicked, this, &Book::createDir);
     connect(flushPB, &QAbstractButton::clicked, this, &Book::flushFile);
@@ -60,6 +63,16 @@ Book::Book(QWidget *parent)
 
 }
 
+Book::~Book()
+{
+    if(m_progressDialog) {
+        m_progressDialog->close();
+        delete m_progressDialog;
+        m_progressDialog = nullptr;
+    }
+
+}
+
 void Book::setThreadPool(ThreadPool *pool)
 {
     m_threadPool = pool;
@@ -71,34 +84,13 @@ void Book::updateFileList(const PDU *pdu)
         return;
     }
 
-    //旧版
-
-    // FileInfo* file_info = NULL;
-
-    // //清楚原有的数据
-    // bookList->clear();
-    // //将客户端发送的pdu传到结构体上
-    // for(int i = 0; i < pdu->uiMsglen/sizeof(FileInfo); i++){
-
-    //     file_info = (FileInfo*)pdu->caMsg + i;
-
-    //     //产生item对象
-    //     QListWidgetItem* item = new QListWidgetItem;
-    //     //设置图标
-    //     item->setIcon(QIcon(QPixmap(0 == file_info->fileType ? QString(":/icon/dir.jpg") : QString(":/icon/file.jpg"))));
-    //     item->setText(file_info->fileName);
-    //     //item输入到bookList上面
-    //     bookList->addItem(item);
-
-    // }
-
     //调用线程池刷新
     int file_count = pdu->uiMsglen / sizeof(FileInfo);
 
-    // ✅ 立即拷贝数据，不依赖 pdu 后续是否存活
+    //立即拷贝数据，不依赖 pdu 后续是否存活
     QByteArray rawData((const char*)pdu->caMsg, pdu->uiMsglen);
 
-    // 判断是否使用线程池（文件数量多时才用，避免小文件时的开销）
+    // 判断是否使用线程池
     bool use_threadPool = (m_threadPool != nullptr && file_count > 3);
 
     if(use_threadPool){
@@ -314,6 +306,7 @@ void Book::enterDir(const QModelIndex &index)
 
 }
 
+
 void Book::uploadFile()
 {
     //上传路径和文件
@@ -343,6 +336,9 @@ void Book::uploadFile()
 
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
 
+    //显示进度条
+    showProgress("正在上传", file_name);
+
     delete pdu;
 
     //设置定时器，避免内容黏连
@@ -366,6 +362,9 @@ void Book::uploadFileData()
     char buffer[4096];  // 使用栈数组，避免手动内存管理
 
     qDebug() << "开始上传文件，大小:" << fileSize << "字节";
+
+    //更新进度
+    updateProgress(totalSent, fileSize);
 
     while(!file.atEnd()) {
         // 读取数据块
@@ -401,10 +400,14 @@ void Book::uploadFileData()
 
     file.close();
 
+    //关闭进度条
+    hideProgress();
+
     qDebug() << "文件上传完成，总发送:" << totalSent << "字节";
 
 }
 
+/**********************************************************************************/
 void Book::downloadFile()
 {
     //发送路径和要下载的文件名
@@ -416,7 +419,7 @@ void Book::downloadFile()
 
     QString file_name = item->text();
 
-    // ✅ 添加 DontUseNativeDialog 选项
+    // 添加 DontUseNativeDialog 选项
     QFileDialog::Options options;
     options |= QFileDialog::DontUseNativeDialog;  // 强制使用Qt对话框，不使用系统原生对话框
 
@@ -475,6 +478,9 @@ void Book::handleDownloadRespond(PDU *pdu)
     QString file_name = parts[0];
     download_total = parts[1].toLongLong();
 
+    //显示进度条
+    showProgress("正在下载", file_name);
+
     //打开本地文件并写入
     download_file.setFileName(file_save_path);
     if(!download_file.open(QIODevice::WriteOnly)){
@@ -486,38 +492,6 @@ void Book::handleDownloadRespond(PDU *pdu)
     //设置状态
     download_state = Receiving;
     download_received = 0;
-
-}
-
-void Book::handleDownloadComplete()
-{
-    if(download_state == Receiving){
-
-        // ✅ 强制刷新缓冲区，确保数据写入磁盘
-        download_file.flush();
-
-        download_file.close();
-        download_state = Completed;
-        QMessageBox::information(this, "下载", "文件下载成功！");
-
-        // 重置状态
-        download_state = Idle;
-        download_received = 0;
-        download_total = 0;
-    }
-}
-
-void Book::handleDownloadError(PDU* pdu)
-{
-    QString error = QString::fromUtf8(pdu->caData);
-    if(download_file.isOpen()) {
-        download_file.close();
-    }
-
-    download_state = Idle;
-    download_received = 0;
-    download_total = 0;
-    QMessageBox::warning(this, "下载错误", error);
 
 }
 
@@ -540,12 +514,54 @@ void Book::handleDownloadData(PDU *pdu)
     }
 
     download_received += written;
+    //更新进度条
+    updateProgress(download_received, download_total);
 
     qDebug() << "下载进度:" << download_received << "/" << download_total;
 
 }
 
 
+void Book::handleDownloadComplete()
+{
+    if(download_state == Receiving){
+
+        // ✅ 强制刷新缓冲区，确保数据写入磁盘
+        download_file.flush();
+
+        download_file.close();
+        download_state = Completed;
+        QMessageBox::information(this, "下载", "文件下载成功！");
+
+        // 重置状态
+        download_state = Idle;
+        download_received = 0;
+        download_total = 0;
+
+        //关闭进度条
+        hideProgress();
+    }
+}
+
+void Book::handleDownloadError(PDU* pdu)
+{
+    QString error = QString::fromUtf8(pdu->caData);
+    if(download_file.isOpen()) {
+        download_file.close();
+    }
+
+    //关闭进度条
+    hideProgress();
+
+    download_state = Idle;
+    download_received = 0;
+    download_total = 0;
+    QMessageBox::warning(this, "下载错误", error);
+
+}
+
+
+/****************************************************************************************/
 void Book::handleShareReceive()
 {
     QMessageBox::information(this, "分享", "文件分享成功！");
@@ -615,3 +631,44 @@ void Book::handleShareResponse(PDU *pdu)
     delete res_pdu;
 }
 
+
+/*************************************************************************************/
+void Book::showProgress(const QString &title, const QString &file_name)
+{
+    if(!m_progressDialog){
+
+        m_progressDialog = new ProgressDialog(this);
+        // 连接取消信号
+        connect(m_progressDialog, &ProgressDialog::cancelled, this, [this](){
+
+            //TODO
+            qDebug() << "用户取消了传输";
+        });
+
+    }
+
+    m_progressDialog->setTitle(title);
+    m_progressDialog->setFileName(file_name);
+
+    m_progressDialog->show();
+}
+
+void Book::updateProgress(qint64 current, qint64 total)
+{
+    if(m_progressDialog && m_progressDialog->isVisible()){
+
+        m_progressDialog->setProgress(current, total);
+    }
+}
+
+void Book::hideProgress()
+{
+    if(m_progressDialog && m_progressDialog->isVisible()) {
+
+        m_progressDialog->setFinished();
+        // 延迟关闭，让用户看到完成状态
+        m_progressDialog->deleteLater();
+        m_progressDialog = nullptr;
+    }
+
+}

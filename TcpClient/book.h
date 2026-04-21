@@ -10,12 +10,14 @@
 #include <QTimer>
 #include <QFile>
 #include "threadpool.h"
+#include "progressdialog.h"
 
 class Book : public QWidget
 {
     Q_OBJECT
 public:
     explicit Book(QWidget *parent = nullptr);
+    ~Book();
     void updateFileList(const PDU* pdu);
     QTimer *file_timer;
     qint64 file_total_size;
@@ -68,6 +70,11 @@ private:
     FileDownloadState download_state;
 
     ThreadPool* m_threadPool;
+
+    ProgressDialog* m_progressDialog;
+    void showProgress(const QString& title, const QString& file_name);
+    void updateProgress(qint64 current, qint64 total);
+    void hideProgress();
 
 };
 
