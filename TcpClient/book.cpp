@@ -6,6 +6,7 @@
 #include <QMessageBox>
 #include "opewidget.h"
 #include "sharefile.h"
+#include <QCoreApplication>
 
 Book::Book(QWidget *parent)
     : QWidget{parent}
@@ -65,12 +66,23 @@ Book::Book(QWidget *parent)
 
 Book::~Book()
 {
-    if(m_progressDialog) {
-        m_progressDialog->close();
-        delete m_progressDialog;
-        m_progressDialog = nullptr;
+
+    qDebug() << "Book 析构开始";
+
+    if(file_timer && file_timer->isActive()) {
+        file_timer->stop();
     }
 
+    if(upload_file.isOpen()) {
+        upload_file.close();
+    }
+    if(download_file.isOpen()) {
+        download_file.close();
+    }
+
+
+
+    qDebug() << "Book 析构完成";
 }
 
 void Book::setThreadPool(ThreadPool *pool)
@@ -306,7 +318,7 @@ void Book::enterDir(const QModelIndex &index)
 
 }
 
-
+/********************************************************************************/
 void Book::uploadFile()
 {
     //上传路径和文件
@@ -322,16 +334,23 @@ void Book::uploadFile()
     //将路径的文件名提取出来
     int lastSlash = file_save_path.lastIndexOf('/');
     QString file_name = file_save_path.mid(lastSlash+1);
+
     //上传文件的大小
-    QFile file(file_save_path);
-    qint64 file_size = file.size();
+    upload_file.setFileName(file_save_path);
+    if(!upload_file.open(QIODevice::ReadOnly)){
+
+        QMessageBox::warning(this, "上传文件", "打开失败");
+        return;
+    }
+    upload_total = upload_file.size();
+    upload_sent = 0;
 
     PDU* pdu = makePDU(cur_path.toUtf8().size()+1);
     pdu->uiMsgType = ENUM_MSG_TYPE_UPLOAD_REQUEST;
     //发送当前路径
     qstrncpy((char*)pdu->caMsg, cur_path.toUtf8().constData(), pdu->uiMsglen);
     //发送大小和文件名
-    QString dataStr = QString("%1|%2").arg(file_name).arg(file_size);
+    QString dataStr = QString("%1|%2").arg(file_name).arg(upload_total);
     qstrncpy(pdu->caData, dataStr.toUtf8().constData(), 64);
 
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
@@ -347,28 +366,21 @@ void Book::uploadFile()
 
 void Book::uploadFileData()
 {
+    //上传过程中会反复调用这个函数
+
     file_timer->stop();
-    //再把文件打开上传内容
-    QFile file(file_save_path);
 
-    if(!file.open(QIODevice::ReadOnly)){
+    char buffer[64 * 1024];  // 使用栈数组，避免手动内存管理
+    const int BATCH_SIZE = 5;  // 一次定时器发送5块
+    int sentCount = 0;
+    bool hasError = false;
 
-        QMessageBox::warning(this, "上传文件", "打开失败");
-        return;
-    }
 
-    qint64 fileSize = file.size();
-    qint64 totalSent = 0;
-    char buffer[4096];  // 使用栈数组，避免手动内存管理
+    qDebug() << "开始上传文件，大小:" << upload_total << "字节";
 
-    qDebug() << "开始上传文件，大小:" << fileSize << "字节";
-
-    //更新进度
-    updateProgress(totalSent, fileSize);
-
-    while(!file.atEnd()) {
+    while(!upload_file.atEnd() && sentCount < BATCH_SIZE) {
         // 读取数据块
-        qint64 bytesRead = file.read(buffer, sizeof(buffer));
+        qint64 bytesRead = upload_file.read(buffer, sizeof(buffer));
 
         if(bytesRead > 0) {
             // 发送数据块
@@ -377,33 +389,60 @@ void Book::uploadFileData()
             if(bytesSent != bytesRead) {
                 qDebug() << "发送不完整:" << bytesSent << "/" << bytesRead;
                 QMessageBox::warning(this, "上传文件", "网络发送失败");
+                hasError = true;
                 break;
             }
 
-            totalSent += bytesSent;
+            upload_sent += bytesSent;
+            sentCount++;
 
             // 等待数据发送完成，避免TCP缓冲区溢出
             TcpClient::getInstance().getTcpSocket().flush();
 
-            // 可选：显示进度
-            int progress = (totalSent * 100) / fileSize;
+            //更新进度
+            updateProgress(upload_sent, upload_total);
+            int progress = (upload_sent * 100) / upload_total;
             qDebug() << "上传进度:" << progress << "%";
-        } else if(bytesRead == 0) {
+
+        }
+
+        else if(bytesRead == 0) {
+
             // 正常结束
             break;
-        } else {
-            qDebug() << "读文件失败，错误:" << file.errorString();
-            QMessageBox::warning(this, "上传文件", "读文件失败: " + file.errorString());
+        }
+
+        else {
+
+            hasError = true;
+            qDebug() << "读文件失败，错误:" << upload_file.errorString();
+            QMessageBox::warning(this, "上传文件", "读文件失败: " + upload_file.errorString());
             break;
         }
     }
 
-    file.close();
 
-    //关闭进度条
-    hideProgress();
+    if(upload_file.atEnd() || hasError) {
+        upload_file.close();
 
-    qDebug() << "文件上传完成，总发送:" << totalSent << "字节";
+        // ✅ 上传完成后，停止定时器并清理
+        if(file_timer && file_timer->isActive()) {
+            file_timer->stop();
+        }
+
+        if(!hasError) {
+            updateProgress(upload_sent, upload_total);
+
+            // ✅ 延迟隐藏进度条，避免在事件循环中删除
+            QTimer::singleShot(500, this, [this]() {
+                hideProgress();
+            });
+            qDebug() << "上传完成";
+        }
+    } else {
+        // 继续上传
+        file_timer->start(50);
+    }
 
 }
 
@@ -497,6 +536,8 @@ void Book::handleDownloadRespond(PDU *pdu)
 
 void Book::handleDownloadData(PDU *pdu)
 {
+    //反复调用这个函数
+
     if(download_state != Receiving) {
         qDebug() << "未在接收状态，忽略数据";
         return;
@@ -504,20 +545,33 @@ void Book::handleDownloadData(PDU *pdu)
 
     //获取数据,这个是data_pdu
     QByteArray data((char*)pdu->caMsg, pdu->uiMsglen);
-
     //写入文件
     qint64 written = download_file.write(data);
+
     if(written != data.size()) {
+
         qDebug() << "写入文件失败";
         handleDownloadError(pdu);
         return;
     }
 
     download_received += written;
-    //更新进度条
+    // ✅ 每收到一定数据后强制刷新磁盘
+    if(download_received % (1024 * 1024) == 0) {  // 每1MB刷新一次
+        download_file.flush();
+        qDebug() << "刷新磁盘缓冲区，已接收:" << download_received;
+    }
+
+    // 更新进度条
     updateProgress(download_received, download_total);
 
     qDebug() << "下载进度:" << download_received << "/" << download_total;
+
+    // 检查是否完成
+    if(download_received >= download_total) {
+
+        handleDownloadComplete();
+    }
 
 }
 
@@ -528,10 +582,8 @@ void Book::handleDownloadComplete()
 
         // ✅ 强制刷新缓冲区，确保数据写入磁盘
         download_file.flush();
-
         download_file.close();
         download_state = Completed;
-        QMessageBox::information(this, "下载", "文件下载成功！");
 
         // 重置状态
         download_state = Idle;
@@ -540,6 +592,8 @@ void Book::handleDownloadComplete()
 
         //关闭进度条
         hideProgress();
+
+        QMessageBox::information(this, "下载", "文件下载成功！");
     }
 }
 
@@ -559,6 +613,12 @@ void Book::handleDownloadError(PDU* pdu)
     QMessageBox::warning(this, "下载错误", error);
 
 }
+
+
+
+
+
+
 
 
 /****************************************************************************************/
@@ -632,6 +692,10 @@ void Book::handleShareResponse(PDU *pdu)
 }
 
 
+
+
+
+
 /*************************************************************************************/
 void Book::showProgress(const QString &title, const QString &file_name)
 {
@@ -641,7 +705,14 @@ void Book::showProgress(const QString &title, const QString &file_name)
         // 连接取消信号
         connect(m_progressDialog, &ProgressDialog::cancelled, this, [this](){
 
-            //TODO
+            if(download_state == Receiving){
+
+                cancelDownload();
+            }
+            else{
+
+                cancelUpload();
+            }
             qDebug() << "用户取消了传输";
         });
 
@@ -663,12 +734,98 @@ void Book::updateProgress(qint64 current, qint64 total)
 
 void Book::hideProgress()
 {
-    if(m_progressDialog && m_progressDialog->isVisible()) {
+    if(!m_progressDialog) return;
 
-        m_progressDialog->setFinished();
-        // 延迟关闭，让用户看到完成状态
-        m_progressDialog->deleteLater();
-        m_progressDialog = nullptr;
+    qDebug() << "hideProgress 被调用";
+
+    // ✅ 断开信号连接，防止回调
+    m_progressDialog->disconnect();
+
+    // ✅ 设置完成后关闭
+    m_progressDialog->setFinished();
+
+    // ✅ 延迟删除，避免在事件处理中删除自己
+    QTimer::singleShot(100, this, [this]() {
+        if(m_progressDialog) {
+            m_progressDialog->close();
+            m_progressDialog->deleteLater();
+            m_progressDialog = nullptr;
+            qDebug() << "进度条已删除";
+        }
+    });
+
+}
+
+void Book::cancelUpload()
+{
+    m_cancelUpload = true;
+
+    //停止定时器
+    if(file_timer && file_timer->isActive()){
+
+        file_timer->stop();
     }
+
+    //关闭文件
+    if(upload_file.isOpen()){
+
+        upload_file.close();
+    }
+
+    //删除临时文件
+    if(!file_save_path.isEmpty() && QFile::exists(file_save_path)){
+
+        QFile::remove(file_save_path);
+    }
+
+    //通知服务器取消上传
+    sendCancelUploadRequest();
+
+    //重置状态
+    m_cancelUpload = false;
+
+    //隐藏进度条
+    hideProgress();
+
+    qDebug() << "上传已取消";
+
+}
+
+void Book::sendCancelUploadRequest()
+{
+
+    PDU* pdu = makePDU();
+    pdu->uiMsgType = ENUM_MSG_TYPE_UPLOAD_CANCEL_REQUEST;
+    //qstrncpy(pdu->caData, file_save_path.toUtf8().constData(), 64);
+    TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
+    delete pdu;
+
+}
+
+void Book::cancelDownload(){
+
+    m_cancelDownload = true;
+
+    if(download_file.isOpen()){
+
+        download_file.close();
+    }
+
+    if(!file_save_path.isEmpty() && QFile::exists(file_save_path)){
+
+        QFile::remove(file_save_path);
+    }
+
+    sendCancelDownloadRequest();
+
+    download_state = Idle;
+    m_cancelDownload = false;
+
+    hideProgress();
+
+}
+
+void Book::sendCancelDownloadRequest()
+{
 
 }

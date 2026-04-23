@@ -16,6 +16,7 @@ class MyTcpSocket : public QTcpSocket
 public:
     explicit MyTcpSocket(QObject *parent = nullptr);
     QString getName();
+
     enum FileUploadState {
         Idle,           // 空闲，没有文件上传
         Preparing,      // 准备接收文件
@@ -40,7 +41,7 @@ public slots:
     void sendNextChunk();
     void finishDownload();
     void handleDownloadError(const QString& error);
-    //void onBytesWritten(qint64 bytes);
+    void onBytesWritten(qint64 bytes);                  //发送完后回调
 
 
 private:
@@ -67,11 +68,12 @@ private:
 
     QFile* download_file;
     FileDownloadState download_state;
-    qint64 download_sent{0};            // 已发送大小
-    qint64 download_total{0};           // 文件总大小
+    qint64 download_sent{0};                        // 已发送大小
+    qint64 download_total{0};                       // 文件总大小
     void handleDownloadRequest(PDU* pdu);
-    bool m_isSending = false;
-    QByteArray m_pendingData;  // 待发送的数据
+    void sendBatchData();
+    bool m_isSending = false;               // 是否正在等待写入完成
+
 
     //分享
     void handleShareFile(PDU* pdu);

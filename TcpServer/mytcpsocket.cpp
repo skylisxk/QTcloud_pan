@@ -58,7 +58,6 @@ MyTcpSocket::MyTcpSocket(QObject *parent)
     connect(this, &MyTcpSocket::uploadComplete, this, &MyTcpSocket::handleUploadComplete, Qt::QueuedConnection);
     connect(this, &MyTcpSocket::uploadError, this, &MyTcpSocket::handleUploadError, Qt::QueuedConnection);
 
-
 }
 
 QString MyTcpSocket::getName()
@@ -613,16 +612,21 @@ void MyTcpSocket::receiveMsg()
         break;
     }
 
-    case ENUM_MSG_TYPE_FILE_SHARE_REQUEST:{
+    case ENUM_MSG_TYPE_FILE_SHARE_REQUEST:{                                 //分享请求
 
         handleShareFile(pdu);
         break;
     }
 
-    case ENUM_MSG_TYPE_FILE_SHARE_CONFIRM:{
+    case ENUM_MSG_TYPE_FILE_SHARE_CONFIRM:{                                 //确认接收分享
 
         handleShareConfirm(pdu);
         break;
+    }
+
+    case ENUM_MSG_TYPE_UPLOAD_CANCEL_REQUEST:{                              //取消上传
+
+        handleUploadError();
     }
 
 
@@ -883,6 +887,10 @@ void MyTcpSocket::sendUploadResponse(const char* status)
     delete pdu;
 }
 
+
+
+
+
 /*-----------------------------------------------------------------------------------------------*/
 void MyTcpSocket::handleDownloadRequest(PDU *pdu)
 {
@@ -916,6 +924,10 @@ void MyTcpSocket::handleDownloadRequest(PDU *pdu)
         return;
     }
 
+    // ✅ 断开旧信号连接
+    disconnect(this, &QTcpSocket::bytesWritten,
+               this, &MyTcpSocket::onBytesWritten);
+
     //获取文件大小
     QFileInfo file_info(path);
     qint64 file_size = file_info.size();
@@ -924,6 +936,11 @@ void MyTcpSocket::handleDownloadRequest(PDU *pdu)
     download_state = d_receiving;
     download_total = fileInfo.size();
     download_sent = 0;
+    m_isSending = false;
+
+    // ✅ 连接 bytesWritten 信号
+    connect(this, &QTcpSocket::bytesWritten,
+            this, &MyTcpSocket::onBytesWritten, Qt::UniqueConnection);
 
     //发送文件名和大小
     PDU* res_pdu = makePDU();
@@ -932,55 +949,62 @@ void MyTcpSocket::handleDownloadRequest(PDU *pdu)
 
     delete res_pdu;
 
-    //服务器分块发送文件数据
-    QTimer::singleShot(1, this, &MyTcpSocket::sendNextChunk);
+    // ✅ 启动批量发送
+    sendBatchData();
 }
 
 void MyTcpSocket::sendNextChunk()
 {
-    if(!download_file) {
-        qDebug() << "文件指针为空";
-        handleDownloadError("file not open");
-        return;
-    }
-
-    if(download_state != d_receiving){
-
-        return;
-    }
-
+    if(!download_file || download_state != d_receiving) return;
     if(download_file->atEnd()) {
         finishDownload();
-        delete download_file;
         return;
     }
 
-    char buffer[64*1024];
-    qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
+    // 只发送一块，启动发送流程
+    sendBatchData();
+}
 
-    if(bytes_read > 0) {
+void MyTcpSocket::sendBatchData()
+{
+    if(!download_file || download_state != d_receiving) return;
+
+    const int MAX_PENDING = 512 * 1024;  // 512KB 缓冲区上限
+
+    // 连续发送，直到缓冲区满或文件读完
+    while(!download_file->atEnd() && bytesToWrite() < MAX_PENDING) {
+        char buffer[64 * 1024];
+        qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
+
+        if(bytes_read <= 0) break;
+
         PDU* data_pdu = makePDU(bytes_read);
         data_pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_PROCESS;
         memcpy(data_pdu->caMsg, buffer, bytes_read);
 
-        qint64 bytes_sent = write((char*)data_pdu, data_pdu->uiPDUlen);
-
-        if(bytes_sent == data_pdu->uiPDUlen) {
-            download_sent += bytes_read;
-            flush();
-            QTimer::singleShot(10, this, &MyTcpSocket::sendNextChunk);
-        } else {
-            qDebug() << "发送失败";
-            handleDownloadError("send failed");
-        }
-
+        write((char*)data_pdu, data_pdu->uiPDUlen);
+        download_sent += bytes_read;
         delete data_pdu;
-    } else {
-        qDebug() << "读取文件失败";
-        handleDownloadError("read failed");
+
     }
 
+    flush();
 
+    if(download_file->atEnd()) {
+        finishDownload();
+    }
+    // 如果还有数据，等待 bytesWritten 信号继续发送
+}
+
+void MyTcpSocket::onBytesWritten(qint64 bytes)
+{
+
+    Q_UNUSED(bytes);
+
+    // 缓冲区有空闲了，继续批量发送
+    if(download_state == d_receiving && download_file && !download_file->atEnd()) {
+        sendBatchData();
+    }
 }
 
 
@@ -1001,6 +1025,12 @@ void MyTcpSocket::finishDownload()
     download_state = d_idle;
     download_sent = 0;
     download_total = 0;
+    m_isSending = false;
+
+    // 断开信号连接
+    disconnect(this, &QTcpSocket::bytesWritten,
+               this, &MyTcpSocket::onBytesWritten);
+
 }
 
 void MyTcpSocket::handleDownloadError(const QString &error)
@@ -1021,7 +1051,15 @@ void MyTcpSocket::handleDownloadError(const QString &error)
     download_state = d_idle;
     download_sent = 0;
     download_total = 0;
+    m_isSending = true;
+
+    // 断开信号连接
+    disconnect(this, &QTcpSocket::bytesWritten,
+               this, &MyTcpSocket::onBytesWritten);
 }
+
+
+
 
 
 /*-----------------------------------------------------------------------------------------------*/
@@ -1079,23 +1117,6 @@ void MyTcpSocket::handleShareConfirm(PDU *pdu)
     QString recipient_path = QString("./%1").arg(recipient_name) + '/' + file_name;
 
     /************************************多线程********************************/
-
-    // //判断是否为文件
-    // QFileInfo file_info(share_path);
-    // if(file_info.isFile()){
-
-    //     //使用静态函数拷贝,把share的拷贝到recipient
-    //     QFile::copy(share_path, recipient_path);
-    // }
-    // //如果是文件夹
-    // else if(file_info.isDir()){
-
-    //     handleShareDirCopy(share_path, recipient_path);
-    // }
-    // //拷贝完成，发送给服务器
-    // PDU* res_pdu = makePDU();
-    // addHelper(res_pdu, "share complete", ENUM_MSG_TYPE_FILE_SHARE_DONE);
-    // delete res_pdu;
 
     if(m_threadPool){
 

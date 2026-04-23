@@ -65,7 +65,22 @@ TcpClient::TcpClient(QWidget *parent)
 
 TcpClient::~TcpClient()
 {
+    qDebug() << "TcpClient 析构开始";
+
+    // 先清理 Book
+    if(book) {
+        delete book;
+        book = nullptr;
+    }
+
+    // 关闭 socket
+    if(tcpSocket.isOpen()) {
+        tcpSocket.close();
+    }
+
     delete ui;
+    qDebug() << "TcpClient 析构完成";
+
 }
 
 void TcpClient::loadConfig()
