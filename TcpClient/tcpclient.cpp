@@ -121,21 +121,36 @@ void TcpClient::receiveMsg()
 {
 
     qDebug() << "=== receiveMsg 被调用 ===";
+    qDebug() << "可用数据:" << tcpSocket.bytesAvailable();
 
-
-    unsigned int uiPDUlen = 0;                                  //总的长度
-    tcpSocket.read((char*)&uiPDUlen, sizeof(unsigned int));     //将uint类型传入到uiPDUlen的第一个字符里面
-
-    // 检查PDU长度合法性
-    if(uiPDUlen < sizeof(PDU) || uiPDUlen > 10 * 1024 * 1024) {
-        qDebug() << "非法PDU长度:" << uiPDUlen;
-        tcpSocket.readAll();  // 清空缓冲区
+    // 先 peek PDU 长度
+    if(tcpSocket.bytesAvailable() < sizeof(unsigned int)) {
+        qDebug() << "数据不足，等待";
         return;
     }
 
-    unsigned int uiMsgLen = uiPDUlen - sizeof(PDU);             //实际消息长度
-    PDU* pdu = makePDU(uiMsgLen);                               //构造函数,pdu是操作的一个对象
-    tcpSocket.read((char*)pdu + sizeof(unsigned int), uiPDUlen - sizeof(unsigned int));       //实际操作的是地址，从第pdu+sizeof(uint)的地址开始传入，读取剩余的长度
+    unsigned int uiPDUlen = 0;
+    tcpSocket.peek((char*)&uiPDUlen, sizeof(unsigned int));
+    qDebug() << "peek PDU长度:" << uiPDUlen;
+
+    // 检查是否是下载数据
+    if(uiPDUlen < sizeof(PDU) || uiPDUlen > 10 * 1024 * 1024) {
+        qDebug() << "非法PDU长度，可能是文件数据";
+        // 直接读取所有数据作为文件数据处理
+        QByteArray data = tcpSocket.readAll();
+        if(book && book->download_state == Book::Receiving) {
+            qDebug() << "直接处理文件数据，大小:" << data.size();
+            book->handleDownloadRawData(data);
+        }
+        return;
+    }
+
+    // 正常 PDU 解析
+    unsigned int uiMsgLen = uiPDUlen - sizeof(PDU);
+    PDU* pdu = makePDU(uiMsgLen);
+    tcpSocket.read((char*)pdu, uiPDUlen);
+
+    qDebug() << "收到消息类型:" << pdu->uiMsgType;
 
     switch(pdu->uiMsgType){
 

@@ -35,11 +35,13 @@ public:
         Receiving,
         Completed
     };
+    FileDownloadState download_state;
     void handleDownloadRespond(PDU* pdu);
     void handleDownloadComplete();
     void handleDownloadError(PDU* pdu);
     void sendDownloadResponse(const char* status);
     void handleDownloadData(PDU* pdu);
+    void handleDownloadRawData(const QByteArray& data);
 
     //分享
     void handleShareResponse(PDU* pdu);
@@ -77,12 +79,12 @@ private:
     QFile download_file;           // 下载文件
     qint64 download_total;         // 文件总大小
     qint64 download_received;      // 已接收大小
-    FileDownloadState download_state;
+
 
     ThreadPool* m_threadPool;
 
     //进度条
-    QPointer<ProgressDialog> m_progressDialog;
+    ProgressDialog* m_progressDialog;
     bool m_cancelUpload;   // 取消上传标志
     bool m_cancelDownload; // 取消下载标志
     void showProgress(const QString& title, const QString& file_name);

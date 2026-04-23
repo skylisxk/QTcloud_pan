@@ -41,7 +41,6 @@ public slots:
     void sendNextChunk();
     void finishDownload();
     void handleDownloadError(const QString& error);
-    void onBytesWritten(qint64 bytes);                  //发送完后回调
 
 
 private:
@@ -71,8 +70,7 @@ private:
     qint64 download_sent{0};                        // 已发送大小
     qint64 download_total{0};                       // 文件总大小
     void handleDownloadRequest(PDU* pdu);
-    void sendBatchData();
-    bool m_isSending = false;               // 是否正在等待写入完成
+    QTimer* m_downloadTimer;  // ✅ 添加下载定时器
 
 
     //分享

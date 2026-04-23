@@ -25,7 +25,7 @@ OpeWidget::OpeWidget(QWidget *parent)
 
     // 创建统一定时器
     refreshTimer = new QTimer(this);
-    refreshTimer->start(5000);  // 5秒刷新一次
+    //refreshTimer->start(5000);  // 5秒刷新一次
     connect(refreshTimer, &QTimer::timeout, this, &OpeWidget::onTimerTimeout);
 
     //切换页的时候刷新

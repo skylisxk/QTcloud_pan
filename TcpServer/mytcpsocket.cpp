@@ -58,6 +58,10 @@ MyTcpSocket::MyTcpSocket(QObject *parent)
     connect(this, &MyTcpSocket::uploadComplete, this, &MyTcpSocket::handleUploadComplete, Qt::QueuedConnection);
     connect(this, &MyTcpSocket::uploadError, this, &MyTcpSocket::handleUploadError, Qt::QueuedConnection);
 
+    // 创建下载定时器
+    m_downloadTimer = new QTimer(this);
+    m_downloadTimer->setSingleShot(false);  // 不单次触发
+    connect(m_downloadTimer, &QTimer::timeout, this, &MyTcpSocket::sendNextChunk);
 }
 
 QString MyTcpSocket::getName()
@@ -894,122 +898,98 @@ void MyTcpSocket::sendUploadResponse(const char* status)
 /*-----------------------------------------------------------------------------------------------*/
 void MyTcpSocket::handleDownloadRequest(PDU *pdu)
 {
-    if(download_state == d_receiving){
-
+    if(download_state == d_receiving) {
         qDebug() << "已有文件正在下载，拒绝新请求";
         return;
     }
 
-    //获取路径和名称
+    // 获取路径和名称
     QString file_name = QString::fromUtf8(pdu->caData);
     QString path = QString::fromUtf8((char*)pdu->caMsg) + '/' + file_name;
 
     QFileInfo fileInfo(path);
-
     if(!fileInfo.exists() || !fileInfo.isFile()) {
-        qDebug() << "文件不存在";
-
-        // 发送错误响应
         handleDownloadError("file not exist");
         return;
     }
 
     download_file = new QFile(path);
-
-    if(!download_file->open(QIODevice::ReadOnly)){
-
+    if(!download_file->open(QIODevice::ReadOnly)) {
         handleDownloadError("open failed");
         delete download_file;
         download_file = nullptr;
         return;
     }
 
-    // ✅ 断开旧信号连接
-    disconnect(this, &QTcpSocket::bytesWritten,
-               this, &MyTcpSocket::onBytesWritten);
+    // 获取文件大小
+    qint64 file_size = fileInfo.size();
 
-    //获取文件大小
-    QFileInfo file_info(path);
-    qint64 file_size = file_info.size();
-
-    //修改状态
+    // 修改状态
     download_state = d_receiving;
-    download_total = fileInfo.size();
+    download_total = file_size;
     download_sent = 0;
-    m_isSending = false;
 
-    // ✅ 连接 bytesWritten 信号
-    connect(this, &QTcpSocket::bytesWritten,
-            this, &MyTcpSocket::onBytesWritten, Qt::UniqueConnection);
-
-    //发送文件名和大小
-    PDU* res_pdu = makePDU();
+    // 发送文件名和大小
+    PDU* res_pdu = makePDU(0);
     QString dataStr = QString("%1|%2").arg(file_name).arg(file_size);
     addHelper(res_pdu, dataStr.toUtf8().constData(), ENUM_MSG_TYPE_DOWNLOAD_RESPOND);
-
     delete res_pdu;
 
-    // ✅ 启动批量发送
-    sendBatchData();
+    // ✅ 启动定时器，每 10ms 发送一块
+    m_downloadTimer->start(10);
+
+    qDebug() << "开始下载，文件大小:" << file_size;
 }
 
 void MyTcpSocket::sendNextChunk()
 {
-    if(!download_file || download_state != d_receiving) return;
+    if(!download_file || download_state != d_receiving) {
+        return;
+    }
+
     if(download_file->atEnd()) {
         finishDownload();
         return;
     }
 
-    // 只发送一块，启动发送流程
-    sendBatchData();
-}
+    char buffer[64 * 1024];
+    qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
 
-void MyTcpSocket::sendBatchData()
-{
-    if(!download_file || download_state != d_receiving) return;
-
-    const int MAX_PENDING = 512 * 1024;  // 512KB 缓冲区上限
-
-    // 连续发送，直到缓冲区满或文件读完
-    while(!download_file->atEnd() && bytesToWrite() < MAX_PENDING) {
-        char buffer[64 * 1024];
-        qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
-
-        if(bytes_read <= 0) break;
-
-        PDU* data_pdu = makePDU(bytes_read);
-        data_pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_PROCESS;
-        memcpy(data_pdu->caMsg, buffer, bytes_read);
-
-        write((char*)data_pdu, data_pdu->uiPDUlen);
-        download_sent += bytes_read;
-        delete data_pdu;
-
-    }
-
-    flush();
-
-    if(download_file->atEnd()) {
+    if(bytes_read <= 0) {
         finishDownload();
+        return;
     }
-    // 如果还有数据，等待 bytesWritten 信号继续发送
-}
 
-void MyTcpSocket::onBytesWritten(qint64 bytes)
-{
+    PDU* data_pdu = makePDU(bytes_read);
+    data_pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_PROCESS;
+    memcpy(data_pdu->caMsg, buffer, bytes_read);
 
-    Q_UNUSED(bytes);
+    qint64 total_len = data_pdu->uiPDUlen;
+    qint64 bytes_sent = write((char*)data_pdu, total_len);
 
-    // 缓冲区有空闲了，继续批量发送
-    if(download_state == d_receiving && download_file && !download_file->atEnd()) {
-        sendBatchData();
+    if(bytes_sent == total_len) {
+        download_sent += bytes_read;
+
+        // 每发送 1MB 打印一次进度
+        if(download_sent % (1024 * 1024) == 0 || download_sent == download_total) {
+            qDebug() << "下载进度:" << download_sent << "/" << download_total;
+        }
+    } else {
+        qDebug() << "发送失败，期望:" << total_len << "实际:" << bytes_sent;
+        delete data_pdu;
+        handleDownloadError("send failed");
+        return;
     }
-}
 
+    delete data_pdu;
+}
 
 void MyTcpSocket::finishDownload()
 {
+    qDebug() << "下载完成，总发送:" << download_sent;
+
+    // ✅ 停止定时器
+    m_downloadTimer->stop();
 
     if(download_file) {
         download_file->close();
@@ -1017,48 +997,33 @@ void MyTcpSocket::finishDownload()
         download_file = nullptr;
     }
 
-    // 发送完成通知给客户端
+    // 发送完成通知
     PDU* finish_pdu = makePDU(0);
     addHelper(finish_pdu, "download finish", ENUM_MSG_TYPE_DOWNLOAD_FINISH);
-    delete finish_pdu;
 
     download_state = d_idle;
     download_sent = 0;
     download_total = 0;
-    m_isSending = false;
-
-    // 断开信号连接
-    disconnect(this, &QTcpSocket::bytesWritten,
-               this, &MyTcpSocket::onBytesWritten);
-
 }
 
-void MyTcpSocket::handleDownloadError(const QString &error)
+void MyTcpSocket::handleDownloadError(const QString& error)
 {
     qDebug() << "下载错误:" << error;
 
+    // ✅ 停止定时器
+    m_downloadTimer->stop();
+
     if(download_file) {
         download_file->close();
         delete download_file;
         download_file = nullptr;
     }
 
-    // 发送错误通知给客户端
     PDU* err_pdu = makePDU(0);
     addHelper(err_pdu, error.toStdString().c_str(), ENUM_MSG_TYPE_DOWNLOAD_ERROR);
-    delete err_pdu;
 
     download_state = d_idle;
-    download_sent = 0;
-    download_total = 0;
-    m_isSending = true;
-
-    // 断开信号连接
-    disconnect(this, &QTcpSocket::bytesWritten,
-               this, &MyTcpSocket::onBytesWritten);
 }
-
-
 
 
 

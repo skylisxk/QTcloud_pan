@@ -95,21 +95,29 @@ bool OperateDB::handleLoginOut(const char *name)
     }
 
     //考虑外键约束
-    QString sql1 = "DELETE FROM friendInfo "
-                   "WHERE id = (SELECT id FROM usrInfo WHERE name = ?) "
-                   "OR friendId = (SELECT id FROM usrInfo WHERE name = ?)";
+    // QString sql1 = "DELETE FROM friendInfo "
+    //                "WHERE id = (SELECT id FROM usrInfo WHERE name = ?) "
+    //                "OR friendId = (SELECT id FROM usrInfo WHERE name = ?)";
 
-    QString sql2 = "delete from usrInfo where name = ?";
-    QSqlQuery query1, query2;
+    // QString sql2 = "delete from usrInfo where name = ?";
+    // QSqlQuery query1, query2;
 
-    query1.prepare(sql1);
-    query1.addBindValue(name);
-    query1.addBindValue(name);
+    // query1.prepare(sql1);
+    // query1.addBindValue(name);
+    // query1.addBindValue(name);
 
-    query2.prepare(sql2);
-    query2.addBindValue(name);
+    // query2.prepare(sql2);
+    // query2.addBindValue(name);
 
-    return query1.exec() && query2.exec();
+    // return query1.exec() && query2.exec();
+
+    QString sql = "UPDATE usrInfo SET online = 0 WHERE name = ?";
+    QSqlQuery query;
+
+    query.prepare(sql);
+    query.addBindValue(name);
+
+    return query.exec();
 
 }
 

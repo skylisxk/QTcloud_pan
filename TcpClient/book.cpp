@@ -449,6 +449,7 @@ void Book::uploadFileData()
 /**********************************************************************************/
 void Book::downloadFile()
 {
+
     //发送路径和要下载的文件名
     QListWidgetItem* item = bookList->currentItem();
     if(!item){
@@ -518,7 +519,7 @@ void Book::handleDownloadRespond(PDU *pdu)
     download_total = parts[1].toLongLong();
 
     //显示进度条
-    showProgress("正在下载", file_name);
+    //showProgress("正在下载", file_name);
 
     //打开本地文件并写入
     download_file.setFileName(file_save_path);
@@ -536,6 +537,9 @@ void Book::handleDownloadRespond(PDU *pdu)
 
 void Book::handleDownloadData(PDU *pdu)
 {
+    qDebug() << "=== handleDownloadData 被调用 ===";
+    qDebug() << "PDU 数据大小:" << pdu->uiMsglen;
+    qDebug() << "download_state:" << download_state;
     //反复调用这个函数
 
     if(download_state != Receiving) {
@@ -557,13 +561,13 @@ void Book::handleDownloadData(PDU *pdu)
 
     download_received += written;
     // ✅ 每收到一定数据后强制刷新磁盘
-    if(download_received % (1024 * 1024) == 0) {  // 每1MB刷新一次
-        download_file.flush();
-        qDebug() << "刷新磁盘缓冲区，已接收:" << download_received;
-    }
+    // if(download_received % (1024 * 1024) == 0) {  // 每1MB刷新一次
+    //     download_file.flush();
+    //     qDebug() << "刷新磁盘缓冲区，已接收:" << download_received;
+    // }
 
     // 更新进度条
-    updateProgress(download_received, download_total);
+    //updateProgress(download_received, download_total);
 
     qDebug() << "下载进度:" << download_received << "/" << download_total;
 
@@ -573,6 +577,32 @@ void Book::handleDownloadData(PDU *pdu)
         handleDownloadComplete();
     }
 
+}
+
+void Book::handleDownloadRawData(const QByteArray &data)
+{
+    qDebug() << "=== handleDownloadRawData ===";
+    qDebug() << "数据大小:" << data.size();
+    qDebug() << "download_state:" << download_state;
+
+    if(download_state != Receiving) {
+        qDebug() << "不在接收状态，忽略";
+        return;
+    }
+
+    qint64 written = download_file.write(data);
+    qDebug() << "写入文件:" << written << "/" << data.size();
+
+    if(written == data.size()) {
+        download_received += written;
+        qDebug() << "下载进度:" << download_received << "/" << download_total;
+
+        if(download_received >= download_total) {
+            handleDownloadComplete();
+        }
+    } else {
+        qDebug() << "写入失败";
+    }
 }
 
 
@@ -591,7 +621,7 @@ void Book::handleDownloadComplete()
         download_total = 0;
 
         //关闭进度条
-        hideProgress();
+        //hideProgress();
 
         QMessageBox::information(this, "下载", "文件下载成功！");
     }
@@ -701,7 +731,17 @@ void Book::showProgress(const QString &title, const QString &file_name)
 {
     if(!m_progressDialog){
 
+        // ✅ 确保旧对话框完全销毁
+        if(m_progressDialog) {
+            m_progressDialog->disconnect();
+            m_progressDialog->close();
+            delete m_progressDialog;
+            m_progressDialog = nullptr;
+        }
+
         m_progressDialog = new ProgressDialog(this);
+        m_progressDialog->setAttribute(Qt::WA_DeleteOnClose);
+
         // 连接取消信号
         connect(m_progressDialog, &ProgressDialog::cancelled, this, [this](){
 
