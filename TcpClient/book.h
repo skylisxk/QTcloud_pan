@@ -72,26 +72,37 @@ private:
 
     QString file_save_path;         //保存上传下载的路径
 
+    //上传
+    enum FileUploadState{
+
+        uploadIdle,
+        Uploading
+    };
+    FileUploadState upload_state;
     QFile upload_file;             // 上传文件
     qint64 upload_sent;
     qint64 upload_total;
+    bool m_cancelUpload;            // 取消上传标志
+    void cancelUpload();
 
+    //下载
     QFile download_file;           // 下载文件
     qint64 download_total;         // 文件总大小
     qint64 download_received;      // 已接收大小
-
+    void cancelDownload();
+    bool m_cancelDownload; // 取消下载标志
 
     ThreadPool* m_threadPool;
 
     //进度条
     ProgressDialog* m_progressDialog;
-    bool m_cancelUpload;   // 取消上传标志
-    bool m_cancelDownload; // 取消下载标志
+
+
     void showProgress(const QString& title, const QString& file_name);
     void updateProgress(qint64 current, qint64 total);
     void hideProgress();
-    void cancelUpload();
-    void cancelDownload();
+
+
     void sendCancelUploadRequest();   //通知服务器取消上传
     void sendCancelDownloadRequest();   //通知取消下载
 };

@@ -40,6 +40,9 @@ MyTcpSocket::MyTcpSocket(QObject *parent)
     : QTcpSocket{parent}
 {
     upload_state = Idle;
+    m_isClosing = false;
+    m_cancelUpload = false;
+    m_cancelDownload = false;
     download_state = d_idle;
     file_recve = 0;
     file_recve_total = 0;
@@ -50,7 +53,7 @@ MyTcpSocket::MyTcpSocket(QObject *parent)
     download_file = nullptr;
 
     //connect(this, SIGNAL(readyRead()), this, SLOT(receiveMsg()));
-    connect(this, SIGNAL(disconnected()), this, SLOT(clientOffline()));
+    connect(this, &QTcpSocket::disconnected, this, &MyTcpSocket::clientOffline);
     connect(this, &QTcpSocket::readyRead, this, &MyTcpSocket::onReadyRead);
 
 
@@ -64,9 +67,39 @@ MyTcpSocket::MyTcpSocket(QObject *parent)
     connect(m_downloadTimer, &QTimer::timeout, this, &MyTcpSocket::sendNextChunk);
 }
 
+MyTcpSocket::~MyTcpSocket()
+{
+    qDebug() << "★★★★★ MyTcpSocket 析构 ★★★★★";
+
+    // 如果还没有下线，强制下线
+    if(!loginName.isEmpty()) {
+        OperateDB::getInstance().handleOffline(loginName.toStdString().c_str());
+        emit offline(this);
+    }
+
+    // 停止定时器
+    if(m_downloadTimer) {
+        m_downloadTimer->stop();
+    }
+
+    // 关闭文件
+    if(download_file) {
+        if(download_file->isOpen()) {
+            download_file->close();
+        }
+        delete download_file;
+        download_file = nullptr;
+    }
+
+    if(q_file.isOpen()) {
+        q_file.close();
+    }
+}
+
+
 QString MyTcpSocket::getName()
 {
-    return strName;
+    return loginName;
 }
 
 void MyTcpSocket::setThreadPool(ThreadPool *pool)
@@ -74,19 +107,86 @@ void MyTcpSocket::setThreadPool(ThreadPool *pool)
     m_threadPool = pool;
 }
 
+
+void MyTcpSocket::onReadyRead()
+{
+
+    if (m_isClosing) return;
+
+    const int MAX_PDU = 10;  // 每次最多处理 10 个 PDU
+    int processed = 0;
+
+    while (bytesAvailable() >= sizeof(unsigned int) && processed < MAX_PDU) {
+        processed++;
+        unsigned int testLen = 0;
+        peek((char*)&testLen, sizeof(unsigned int));
+
+        if (testLen >= sizeof(PDU) && testLen <= 10 * 1024 * 1024) {
+            if (!tryParsePDU()) break;
+        } else {
+            break;
+        }
+    }
+
+    if (upload_state == Receiving && bytesAvailable() > 0) {
+        // 限制文件数据处理量
+        const int MAX_CHUNK = 64 * 1024;
+        QByteArray data = read(qMin(bytesAvailable(), (qint64)MAX_CHUNK));
+        if (!data.isEmpty()) {
+            q_file.write(data);
+            file_recve += data.size();
+        }
+    }
+}
+
+
+bool MyTcpSocket::tryParsePDU()
+{
+    if(m_isClosing) {
+        return false;
+    }
+
+    if(bytesAvailable() < sizeof(unsigned int)) {
+        return false;
+    }
+
+    unsigned int uiPDUlen = 0;
+    peek((char*)&uiPDUlen, sizeof(unsigned int));
+
+    if(uiPDUlen < sizeof(PDU) || uiPDUlen > 10 * 1024 * 1024) {
+        qDebug() << "非法PDU长度:" << uiPDUlen;
+        readAll();
+        return false;
+    }
+
+    if(bytesAvailable() < uiPDUlen) {
+        return false;
+    }
+
+    // ✅ 调用原有的 receiveMsg()
+    receiveMsg();
+
+    return true;
+}
+
 void MyTcpSocket::receiveMsg()
 {
-    // 安全检查：正在上传文件时不处理协议消息
-    if(upload_state != Idle) {
-        qDebug() << "错误：非空闲状态进入 receiveMsg";
-        return;
-    }
 
     // 读取PDU长度
     unsigned int uiPDUlen = 0;
-    read((char*)&uiPDUlen, sizeof(unsigned int));
+    qint64 readLen = read((char*)&uiPDUlen, sizeof(unsigned int));
 
-    // 计算消息长度并分配PDU
+    if(readLen != sizeof(unsigned int)) {
+        qDebug() << "读取PDU长度失败";
+        return;
+    }
+
+    if(uiPDUlen < sizeof(PDU) || uiPDUlen > 10 * 1024 * 1024) {
+        qDebug() << "非法PDU长度:" << uiPDUlen;
+        readAll();
+        return;
+    }
+
     unsigned int uiMsgLen = uiPDUlen - sizeof(PDU);
     PDU* pdu = makePDU(uiMsgLen);
     if(!pdu) {
@@ -94,14 +194,14 @@ void MyTcpSocket::receiveMsg()
         return;
     }
 
-    // 读取剩余数据
-    qint64 readLen = read((char*)pdu + sizeof(unsigned int), uiPDUlen - sizeof(unsigned int));
-
+    readLen = read((char*)pdu + sizeof(unsigned int), uiPDUlen - sizeof(unsigned int));
     if(readLen != uiPDUlen - sizeof(unsigned int)) {
         qDebug() << "读取PDU数据不完整";
         free(pdu);
         return;
     }
+
+    qDebug() << "收到消息类型:" << pdu->uiMsgType;
 
     switch(pdu->uiMsgType){
 
@@ -162,7 +262,7 @@ void MyTcpSocket::receiveMsg()
 
         write((char*)resPdu, resPdu->uiPDUlen);                     //将结果返回给客户端
 
-        strName = caName;                                           //将name拷贝
+        loginName = caName;                                           //将name拷贝
 
         free(resPdu);
         resPdu = nullptr;
@@ -630,9 +730,13 @@ void MyTcpSocket::receiveMsg()
 
     case ENUM_MSG_TYPE_UPLOAD_CANCEL_REQUEST:{                              //取消上传
 
-        handleUploadError();
+        handleUploadCancelRequest(pdu);
     }
 
+    case ENUM_MSG_TYPE_DOWNLOAD_CANCEL_REQUEST:{                            //取消下载
+
+        handleCancelDownloadRequest(pdu);
+    }
 
     default:
 
@@ -644,6 +748,13 @@ void MyTcpSocket::receiveMsg()
     pdu = nullptr;
 
 }
+
+/****************************************************
+*****************************************************
+*****************************************************
+*****************************************************
+*****************************************************
+****************************************************/
 
 void MyTcpSocket::addHelper(PDU* &pdu, const char* str, const int type){
 
@@ -691,17 +802,35 @@ void MyTcpSocket::flushFileHelper(QDir &dir, QFileInfoList &file_list, PDU* &res
 
 }
 
-
+//下线功能
 void MyTcpSocket::clientOffline()
 {
-    OperateDB::getInstance().handleOffline(strName.toStdString().c_str());              //将online变成0
+    if (m_isClosing) return;
+    m_isClosing = true;
 
-    //删除tcpSocketList里面的socket
+    qDebug() << "★★★★★ clientOffline 被调用 ★★★★★";
 
-    emit offline(this);                                                                 //发送下线信号
+    // 断开 readyRead 连接，避免后续信号干扰
+    disconnect(this, &QTcpSocket::readyRead, this, &MyTcpSocket::onReadyRead);
+
+    if (QCoreApplication::instance() && !loginName.isEmpty()) {
+        OperateDB::getInstance().handleOffline(loginName.toStdString().c_str());
+    }
+
+    emit offline(this);
 }
 
-/*-------------------------------------------------------------------------------------------------------*/
+/****************************************************
+*****************************************************
+*****************************************************
+*****************************************************
+*****************************************************
+****************************************************/
+
+
+
+
+
 void MyTcpSocket::handleUploadRequest(PDU *pdu)
 {
     // 如果正在上传，拒绝新请求
@@ -752,46 +881,21 @@ void MyTcpSocket::handleUploadRequest(PDU *pdu)
     }
 }
 
-void MyTcpSocket::onReadyRead()
-{
-    // 只要还有数据，就循环处理
-    while(bytesAvailable() > 0) {
-        // 正在接收文件数据
-        if(upload_state == Receiving) {
-            // handleUploadData 现在是异步的（可能在线程池中执行）
-            // 但它会立即返回，不会阻塞
-            handleUploadData();
-
-            // 处理完可能的数据后继续循环
-            // 但需要避免在数据还没读完时，线程池还没处理完旧数据
-            // 这里继续循环是安全的，因为 handleUploadData 会立即返回
-            continue;
-        }
-
-        //空闲状态，处理协议消息
-        if(upload_state == Idle) {
-            // 尝试解析PDU
-            if(!tryParsePDU()) {
-                //无法解析PDU，可能是数据不完整，等待下一次
-                break;
-            }
-            //解析成功，继续循环处理可能的下一个PDU
-            continue;
-        }
-
-        //其他状态（Preparing等），不应该有数据
-        qDebug() << "未知状态，但有数据";
-        break;
-    }
-}
 
 // 处理文件上传数据
 void MyTcpSocket::handleUploadData()
 {
+    if(m_cancelUpload) {
+        qDebug() << "上传已被取消，忽略数据";
+        readAll();  // 清空缓冲区
+        return;
+    }
+
     if(upload_state != Receiving) {
         qDebug() << "错误：非接收状态进入handleUploadData";
         return;
     }
+
 
     QByteArray buffer = readAll();
     if(buffer.isEmpty()) return;
@@ -819,34 +923,6 @@ void MyTcpSocket::handleUploadData()
 
 }
 
-bool MyTcpSocket::tryParsePDU()
-{
-    // 检查是否有足够的字节读取PDU长度
-    if(bytesAvailable() < sizeof(unsigned int)) {
-        return false;
-    }
-
-    // 读取PDU长度（但不从缓冲区移除，先peek）
-    unsigned int uiPDUlen = 0;
-    peek((char*)&uiPDUlen, sizeof(unsigned int));
-
-    // 验证PDU长度的合法性
-    if(uiPDUlen < sizeof(PDU) || uiPDUlen > 10 * 1024 * 1024) {
-        qDebug() << "非法PDU长度:" << uiPDUlen << "，可能是文件数据？";
-        readAll();  // 清空缓冲区
-        return false;
-    }
-
-    // 检查是否有完整的数据
-    if(bytesAvailable() < uiPDUlen) {
-        return false;  // 数据不完整，等待更多
-    }
-
-    receiveMsg();
-
-    return true;
-}
-
 void MyTcpSocket::handleUploadComplete()
 {
     q_file.close();
@@ -864,6 +940,7 @@ void MyTcpSocket::handleUploadComplete()
     upload_state = Idle;
     file_recve_total = 0;
     file_recve = 0;
+    m_cancelUpload = false;
 
     // 4. 清空可能残留的缓冲区
     while(bytesAvailable() > 0) {
@@ -876,6 +953,8 @@ void MyTcpSocket::handleUploadError()
 {
     q_file.close();
     upload_state = Idle;
+    m_cancelUpload = false;
+
 
     // 发送失败响应
     PDU* pdu = makePDU();
@@ -891,11 +970,43 @@ void MyTcpSocket::sendUploadResponse(const char* status)
     delete pdu;
 }
 
+void MyTcpSocket::handleUploadCancelRequest(PDU *pdu)
+{
+    qDebug() << "收到上传取消请求";
+
+    // 修改状态
+    m_cancelUpload = true;
+
+    // 关闭正在接收的文件
+    if(q_file.isOpen()) {
+        q_file.close();
+    }
+
+    QString file_path = q_file.fileName();
+
+    //删除文件
+    if(!file_path.isEmpty() && QFile::exists(file_path)){
+
+        QFile::remove(file_path);
+        qDebug() << "删除未完成的临时文件:" << file_path;
+
+    }
+
+    //重置
+    upload_state = Idle;
+    file_recve = 0;
+    file_recve_total = 0;
+    m_cancelUpload = false;
+}
 
 
+/****************************************************
+*****************************************************
+*****************************************************
+*****************************************************
+*****************************************************
+****************************************************/
 
-
-/*-----------------------------------------------------------------------------------------------*/
 void MyTcpSocket::handleDownloadRequest(PDU *pdu)
 {
     if(download_state == d_receiving) {
@@ -935,6 +1046,8 @@ void MyTcpSocket::handleDownloadRequest(PDU *pdu)
     addHelper(res_pdu, dataStr.toUtf8().constData(), ENUM_MSG_TYPE_DOWNLOAD_RESPOND);
     delete res_pdu;
 
+
+
     // ✅ 启动定时器，每 10ms 发送一块
     m_downloadTimer->start(10);
 
@@ -943,6 +1056,11 @@ void MyTcpSocket::handleDownloadRequest(PDU *pdu)
 
 void MyTcpSocket::sendNextChunk()
 {
+    if (m_cancelDownload) {
+        qDebug() << "下载已取消，忽略后续数据";
+        return;
+    }
+
     if(!download_file || download_state != d_receiving) {
         return;
     }
@@ -998,12 +1116,13 @@ void MyTcpSocket::finishDownload()
     }
 
     // 发送完成通知
-    PDU* finish_pdu = makePDU(0);
+    PDU* finish_pdu = makePDU();
     addHelper(finish_pdu, "download finish", ENUM_MSG_TYPE_DOWNLOAD_FINISH);
 
     download_state = d_idle;
     download_sent = 0;
     download_total = 0;
+    m_cancelDownload = false;  // 重置取消标志
 }
 
 void MyTcpSocket::handleDownloadError(const QString& error)
@@ -1019,15 +1138,46 @@ void MyTcpSocket::handleDownloadError(const QString& error)
         download_file = nullptr;
     }
 
-    PDU* err_pdu = makePDU(0);
+    PDU* err_pdu = makePDU();
     addHelper(err_pdu, error.toStdString().c_str(), ENUM_MSG_TYPE_DOWNLOAD_ERROR);
 
     download_state = d_idle;
+    download_sent = 0;
+    download_total = 0;
+    m_cancelDownload = false;  // 重置取消标志
+}
+
+void MyTcpSocket::handleCancelDownloadRequest(PDU *pdu)
+{
+    qDebug() << "取消下载";
+
+    //修改状态
+    m_cancelDownload = true;
+
+    //关闭文件
+    if(download_file){
+
+        if(download_file->isOpen()){
+
+            download_file->close();
+            delete download_file;
+            download_file = nullptr;
+        }
+    }
+
+    download_state = d_idle;
+    download_sent = 0;
+    download_total = 0;
+    m_cancelDownload = false;
 }
 
 
-
-/*-----------------------------------------------------------------------------------------------*/
+/****************************************************
+*****************************************************
+*****************************************************
+*****************************************************
+*****************************************************
+****************************************************/
 void MyTcpSocket::handleShareFile(PDU *pdu)
 {
 

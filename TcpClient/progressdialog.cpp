@@ -91,6 +91,13 @@ void ProgressDialog::setFinished()
 
 }
 
+void ProgressDialog::setInterrupt()
+{
+    m_isFinished = true;
+    m_cancelBtn->setText("关闭");
+
+}
+
 void ProgressDialog::onCancelClicked()
 {
     if(m_isFinished) {

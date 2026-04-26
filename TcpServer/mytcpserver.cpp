@@ -1,8 +1,19 @@
 #include "mytcpserver.h"
 #include <QDebug>
+#include <QTimer>
+#include <QDateTime>
 
 //创建十个线程
 MyTcpServer::MyTcpServer() : m_threadPool(10)
+{
+    // 启动检查定时器
+    QTimer* checkTimer = new QTimer(this);
+    checkTimer->setInterval(10000);  // 每 10 秒检查一次
+    connect(checkTimer, &QTimer::timeout, this, &MyTcpServer::checkDeadConnections);
+    checkTimer->start();
+}
+
+MyTcpServer::~MyTcpServer()
 {
 
 }
@@ -73,6 +84,25 @@ void MyTcpServer::deleteSocket(MyTcpSocket *mySocket)
     //         qDebug() << socket->getName();
     //     }
     // }
+}
+
+void MyTcpServer::checkDeadConnections()
+{
+    //tcpSocketList 是 MyTcpServer 中保存所有当前连接客户端的列表
+    QMutableListIterator<MyTcpSocket*> iter(tcpSocketList);
+    //遍历检查
+    while (iter.hasNext()) {
+
+        MyTcpSocket* socket = iter.next();
+        //如果状态不是 ConnectedState（比如客户端已经主动断开、网络异常、服务器关闭连接等），则认为该连接已失效
+        if (socket->state() != QAbstractSocket::ConnectedState) {
+
+            qDebug() << "Socket 状态断开，清理:" << socket->getName();
+            socket->clientOffline();
+            socket->deleteLater();
+            iter.remove();
+        }
+    }
 }
 
 ThreadPool& MyTcpServer::getThreadPool(){

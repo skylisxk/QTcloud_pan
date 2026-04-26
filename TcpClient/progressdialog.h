@@ -28,6 +28,7 @@ public:
     void setFileName(const QString& file_name);
     void setProgress(qint64 current, qint64 total);
     void setFinished();
+    void setInterrupt();
 
 signals:
     void cancelled();  // 用户取消

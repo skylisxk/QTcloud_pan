@@ -9,5 +9,6 @@ int main(int argc, char *argv[])
     OperateDB::getInstance().init();
     TcpServer w;
     w.show();
+
     return a.exec();
 }

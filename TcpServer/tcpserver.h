@@ -25,5 +25,6 @@ private:
     QString ip;
     quint16 port;
 
+
 };
 #endif // TCPSERVER_H

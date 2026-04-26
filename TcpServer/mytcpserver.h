@@ -18,6 +18,7 @@ private:
 
 public:
     MyTcpServer();
+    ~MyTcpServer();
 
     static MyTcpServer &getInstance();
     ThreadPool& getThreadPool();
@@ -28,6 +29,11 @@ public:
 public slots:
 
     void deleteSocket(MyTcpSocket* mySocket);                                            //下线并删除socket
+
+public:
+    void checkDeadConnections();
+
 };
+
 
 #endif // MYTCPSERVER_H
