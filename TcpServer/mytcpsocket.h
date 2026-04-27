@@ -50,10 +50,7 @@ public slots:
 
 private:
 
-
-
     QString loginName;
-    QString current_file_name;
 
     void addHelper(PDU* &pdu, const char* str, const int type);                //减少代码冗余
 
@@ -73,7 +70,7 @@ private:
     bool tryParsePDU();
     void handleUploadComplete();
     void handleUploadError();
-    void sendUploadResponse(const char* status);
+    void sendUploadResponse(const char* status, const QString& fileName);
     void handleUploadCancelRequest(PDU* pdu);
 
 
@@ -86,7 +83,7 @@ private:
     void handleDownloadRequest(PDU* pdu);
     QTimer* m_downloadTimer;                            //添加下载定时器
     void handleCancelDownloadRequest(PDU* pdu);         //取消下载
-
+    QString getUniqueName(const QString& file_path);    //重复命名
 
     //分享
     void handleShareFile(PDU* pdu);

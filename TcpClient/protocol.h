@@ -5,6 +5,31 @@
 #include <string.h>
 //#include <unistd.h>
 
+#define REGIST_DONE "reigst success"
+#define REGIST_FAIL "regist fail"
+#define LOGIN_DONE "login success"
+#define LOGIN_FAIL "login fail"
+#define SEARCH_USR_NO "no such user"
+#define SEARCH_USR_ONLINE "online"
+#define SEARCH_USR_OFFLINE "offline"
+
+#define FRIEND_EXIST "friend exist"
+#define DELETE_FINISH "delete finish"
+
+#define DIR_NOT_EXIST "dir not exist"
+#define FILE_EXIST "file exist"
+#define FILE_CREATE_DONE "file create success"
+#define DIR_FILE_DELETE_DONE "delete success"
+#define DIR_FILE_DELETE_FAIL "delete fail"
+#define DIR_FILE_RENAME_DONE "rename success"
+#define DIR_FILE_RENAME_FAIL "rename fail"
+#define FILE_UPLOAD_DONE "file upload success"
+#define FILE_UPLOAD_PROCESS "file uploading"
+#define FILE_UPLOAD_FAIL "file upload fail"
+#define FILE_UPLOAD_RENAME "file upload rename"
+
+#define UNKNOWN "unknown error"
+
 enum ENUM_MSG_TYPE{
 
     ENUM_MSG_TYPE_MIN = 0,

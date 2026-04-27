@@ -24,9 +24,12 @@ public:
 
     void updateFileList(const PDU* pdu);
 
+    //上传
     QTimer *file_timer;
     qint64 file_total_size;
     qint64 file_recve_size;
+    void handleUploadRespond(PDU* pdu);
+
 
     // 下载相关
     enum FileDownloadState{
@@ -91,20 +94,21 @@ private:
     qint64 download_received;      // 已接收大小
     void cancelDownload();
     bool m_cancelDownload; // 取消下载标志
+    QString getUniqueName(const QString& file_path);    //重复命名
 
     ThreadPool* m_threadPool;
 
     //进度条
     ProgressDialog* m_progressDialog;
-
-
     void showProgress(const QString& title, const QString& file_name);
     void updateProgress(qint64 current, qint64 total);
     void hideProgress();
 
-
+    //中断
     void sendCancelUploadRequest();   //通知服务器取消上传
     void sendCancelDownloadRequest();   //通知取消下载
+
+
 };
 
 #endif // BOOK_H

@@ -5,7 +5,6 @@
 #include <QFile>
 #include <QTcpSocket>
 #include <QIODevice>
-#include "protocol.h"
 #include "opewidget.h"
 #include "book.h"
 #include "threadpool.h"

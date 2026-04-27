@@ -11,31 +11,6 @@
 #include <QThread>
 #include <QApplication>
 
-#define REGIST_DONE "reigst success"
-#define REGIST_FAIL "regist fail"
-#define LOGIN_DONE "login success"
-#define LOGIN_FAIL "login fail"
-#define SEARCH_USR_NO "no such user"
-#define SEARCH_USR_ONLINE "online"
-#define SEARCH_USR_OFFLINE "offline"
-
-#define FRIEND_EXIST "friend exist"
-#define DELETE_FINISH "delete finish"
-
-#define DIR_NOT_EXIST "dir not exist"
-#define FILE_EXIST "file exist"
-#define FILE_CREATE_DONE "file create success"
-#define DIR_FILE_DELETE_DONE "delete success"
-#define DIR_FILE_DELETE_FAIL "delete fail"
-#define DIR_FILE_RENAME_DONE "rename success"
-#define DIR_FILE_RENAME_FAIL "rename fail"
-#define FILE_UPLOAD_DONE "file upload success"
-#define FILE_UPLOAD_PROCESS "file uploading"
-#define FILE_UPLOAD_FAIL "file upload fail"
-
-#define UNKNOWN "unknown error"
-
-
 MyTcpSocket::MyTcpSocket(QObject *parent)
     : QTcpSocket{parent}
 {
@@ -111,31 +86,30 @@ void MyTcpSocket::setThreadPool(ThreadPool *pool)
 void MyTcpSocket::onReadyRead()
 {
 
+    qDebug() << "onReadyRead triggered, upload_state=" << upload_state;
+
+
     if (m_isClosing) return;
 
     const int MAX_PDU = 10;  // 每次最多处理 10 个 PDU
     int processed = 0;
 
     while (bytesAvailable() >= sizeof(unsigned int) && processed < MAX_PDU) {
-        processed++;
+
         unsigned int testLen = 0;
         peek((char*)&testLen, sizeof(unsigned int));
 
         if (testLen >= sizeof(PDU) && testLen <= 10 * 1024 * 1024) {
+
             if (!tryParsePDU()) break;
+            processed++;
         } else {
             break;
         }
     }
 
     if (upload_state == Receiving && bytesAvailable() > 0) {
-        // 限制文件数据处理量
-        const int MAX_CHUNK = 64 * 1024;
-        QByteArray data = read(qMin(bytesAvailable(), (qint64)MAX_CHUNK));
-        if (!data.isEmpty()) {
-            q_file.write(data);
-            file_recve += data.size();
-        }
+        handleUploadData();   // 调用原有函数，不要自己重复实现
     }
 }
 
@@ -820,21 +794,20 @@ void MyTcpSocket::clientOffline()
     emit offline(this);
 }
 
-/****************************************************
-*****************************************************
-*****************************************************
-*****************************************************
-*****************************************************
-****************************************************/
-
-
-
+/*----------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------*/
 
 
 void MyTcpSocket::handleUploadRequest(PDU *pdu)
 {
+
     // 如果正在上传，拒绝新请求
     if(upload_state != Idle) {
+
         qDebug() << "已有文件正在上传，拒绝新请求";
         return;
     }
@@ -844,22 +817,33 @@ void MyTcpSocket::handleUploadRequest(PDU *pdu)
     QStringList parts = QString::fromUtf8(pdu->caData).split('|');
 
     if(parts.size() < 2) {
+
         qDebug() << "请求格式错误";
         return;
     }
 
-    QString file_name = parts[0];
+    //原来的名称，要和后续的名字对比
+    QString original_file_name = parts[0];
     qint64 file_size = parts[1].toLongLong();
 
-    qDebug() << "文件名:" << file_name << "大小:" << file_size;
+    qDebug() << "文件名:" << original_file_name << "大小:" << file_size;
 
     // 准备文件
-    QString fullPath = path + '/' + file_name;
-    q_file.setFileName(fullPath);
+    QString full_path = path + '/' + original_file_name;
+
+    // 使用封装函数生成唯一路径
+    QString unique_path = getUniqueName(full_path);
+    q_file.setFileName(unique_path);
+
+    // 提取实际文件名（用于响应）
+    QString actual_file_name = QFileInfo(unique_path).fileName();
+
 
     if(!q_file.open(QIODevice::WriteOnly)) {
+
         qDebug() << "无法创建文件";
-        sendUploadResponse(FILE_UPLOAD_FAIL);
+        sendUploadResponse(FILE_UPLOAD_FAIL, actual_file_name);
+        upload_state = Idle;
         return;
     }
 
@@ -867,15 +851,26 @@ void MyTcpSocket::handleUploadRequest(PDU *pdu)
     upload_state = Receiving;
     file_recve_total = file_size;
     file_recve = 0;
-    current_file_name = file_name;
 
-    qDebug() << "开始接收文件:" << fullPath;
+    // 发送准备就绪响应，并告知实际文件名
+    if (actual_file_name != original_file_name) {
 
-    // 发送准备就绪响应
-    sendUploadResponse(FILE_UPLOAD_PROCESS);
+        // 文件被重命名了，发送新文件名
+        sendUploadResponse(FILE_UPLOAD_RENAME, actual_file_name);
+    }
+
+    else {
+
+        sendUploadResponse(FILE_UPLOAD_PROCESS, actual_file_name);
+
+    }
+
+    qDebug() << "开始接收文件:" << full_path;
+
 
     // 重要：立即检查是否有数据（可能请求和数据一起到达）
     if(bytesAvailable() > 0) {
+
         qDebug() << "立即处理已有数据";
         handleUploadData();
     }
@@ -886,25 +881,30 @@ void MyTcpSocket::handleUploadRequest(PDU *pdu)
 void MyTcpSocket::handleUploadData()
 {
     if(m_cancelUpload) {
+
         qDebug() << "上传已被取消，忽略数据";
         readAll();  // 清空缓冲区
         return;
     }
 
     if(upload_state != Receiving) {
+
         qDebug() << "错误：非接收状态进入handleUploadData";
         return;
     }
 
 
     QByteArray buffer = readAll();
+
     if(buffer.isEmpty()) return;
 
     qDebug() << "收到文件数据:" << buffer.size() << "字节";
 
     /*原版没有线程池*/
     qint64 written = q_file.write(buffer);
+
     if(written != buffer.size()) {
+
         qDebug() << "写入文件失败";
         handleUploadError();
         return;
@@ -915,6 +915,7 @@ void MyTcpSocket::handleUploadData()
 
     // 检查是否完成
     if(file_recve >= file_recve_total) {
+
         qDebug() << "文件接收完成，准备调用handleUploadComplete";
 
         // 使用定时器延迟执行，避免在当前调用栈中处理
@@ -925,6 +926,8 @@ void MyTcpSocket::handleUploadData()
 
 void MyTcpSocket::handleUploadComplete()
 {
+    qDebug() << "=== handleUploadComplete called ===";
+
     q_file.close();
 
     // 发送完成响应
@@ -947,6 +950,9 @@ void MyTcpSocket::handleUploadComplete()
         readAll();
     }
 
+    qDebug() << "=== handleUploadComplete called ===";
+
+
 }
 
 void MyTcpSocket::handleUploadError()
@@ -963,10 +969,16 @@ void MyTcpSocket::handleUploadError()
 
 }
 
-void MyTcpSocket::sendUploadResponse(const char* status)
+void MyTcpSocket::sendUploadResponse(const char* status, const QString& fileName)
 {
     PDU* pdu = makePDU();
-    addHelper(pdu, status, ENUM_MSG_TYPE_UPLOAD_PROCESS);
+    pdu->uiMsgType = ENUM_MSG_TYPE_UPLOAD_PROCESS;
+
+    // 把状态和文件名组合起来发送
+    QString response = QString("%1|%2").arg(status).arg(fileName);
+    qstrncpy(pdu->caData, response.toUtf8().constData(), 64);
+
+    write((char*)pdu, pdu->uiPDUlen);
     delete pdu;
 }
 
@@ -999,13 +1011,51 @@ void MyTcpSocket::handleUploadCancelRequest(PDU *pdu)
     m_cancelUpload = false;
 }
 
+QString MyTcpSocket::getUniqueName(const QString &file_path)
+{
+    qDebug() << "getUniqueName called with:" << file_path;
 
-/****************************************************
-*****************************************************
-*****************************************************
-*****************************************************
-*****************************************************
-****************************************************/
+    QFileInfo file_info(file_path);
+    QString base_name = file_info.completeBaseName();   // 前缀名
+    QString suffix = file_info.suffix();        // 后缀名
+    QString path = file_info.absolutePath();    // 绝对路径
+
+    //后缀添加.
+    if(!suffix.isEmpty()){
+
+        suffix = "." + suffix;
+    }
+
+    //不存在则退出,就是没有遇到同名的文件
+    if(!QFile::exists(file_path)){
+
+        qDebug() << "File does not exist, return original:" << file_path;
+        return file_path;
+    }
+
+    // 尝试添加 (1), (2), (3)... 直到找到不存在的文件名
+    int count = 1;
+    QString new_file_path;
+
+    do{
+
+        new_file_path = QString("%1/%2(%3)%4").arg(path).arg(base_name).arg(count).arg(suffix);
+        count++;
+
+    }   while(QFile::exists(new_file_path));
+
+    qDebug() << "Returning unique path:" << new_file_path;
+    return new_file_path;
+}
+
+
+
+/*--------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------*/
 
 void MyTcpSocket::handleDownloadRequest(PDU *pdu)
 {
@@ -1172,12 +1222,13 @@ void MyTcpSocket::handleCancelDownloadRequest(PDU *pdu)
 }
 
 
-/****************************************************
-*****************************************************
-*****************************************************
-*****************************************************
-*****************************************************
-****************************************************/
+
+/*--------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------*/
 void MyTcpSocket::handleShareFile(PDU *pdu)
 {
 

@@ -13,6 +13,7 @@ Book::Book(QWidget *parent)
 {
     bookList = new QListWidget;
 
+
     backPB = new QPushButton("返回");
     createPB = new QPushButton("创建文件夹");
     removeDirFilePB = new QPushButton("删除文件");
@@ -231,6 +232,18 @@ void Book::deleteDirFile()
     }
 
     QString file_name = item->text();
+
+    // 弹出确认对话框
+    QMessageBox::StandardButton reply;
+    reply = QMessageBox::question(this, "确认删除",
+                                  QString("确定要删除 \"%1\" 吗？").arg(file_name),
+                                  QMessageBox::Yes | QMessageBox::No);
+
+    if(reply != QMessageBox::Yes){
+
+        return;
+    }
+
     QString cur_path = TcpClient::getInstance().curPath;
     PDU* pdu = makePDU(cur_path.toUtf8().size()+1);
 
@@ -349,14 +362,17 @@ void Book::uploadFile()
 
     //上传文件的大小
     upload_file.setFileName(file_save_path);
+
     if(!upload_file.open(QIODevice::ReadOnly)){
 
         QMessageBox::warning(this, "上传文件", "打开失败");
         return;
     }
+
     upload_total = upload_file.size();
     upload_sent = 0;
     upload_state = Uploading;
+
     qDebug() << "upload_state 设置为:" << upload_state;
 
 
@@ -369,14 +385,14 @@ void Book::uploadFile()
     qstrncpy(pdu->caData, dataStr.toUtf8().constData(), 64);
 
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
+    delete pdu;
+
 
     //显示进度条
     showProgress("正在上传", file_name);
 
-    delete pdu;
-
     //设置定时器，避免内容黏连
-    file_timer->start(1000);
+    //file_timer->start(1000);
 }
 
 void Book::uploadFileData()
@@ -479,6 +495,8 @@ void Book::uploadFileData()
     }
 
 }
+
+
 
 /************************************************************************************
  * **********************************************************************************
@@ -595,11 +613,6 @@ void Book::handleDownloadData(PDU *pdu)
     }
 
     download_received += written;
-    // ✅ 每收到一定数据后强制刷新磁盘
-    // if(download_received % (1024 * 1024) == 0) {  // 每1MB刷新一次
-    //     download_file.flush();
-    //     qDebug() << "刷新磁盘缓冲区，已接收:" << download_received;
-    // }
 
     // 更新进度条
     updateProgress(download_received, download_total);
@@ -680,6 +693,43 @@ void Book::handleDownloadError(PDU* pdu)
 }
 
 
+QString Book::getUniqueName(const QString &file_path)
+{
+    qDebug() << "getUniqueName called with:" << file_path;
+
+    QFileInfo file_info(file_path);
+    QString base_name = file_info.completeBaseName();   // 前缀名
+    QString suffix = file_info.suffix();        // 后缀名
+    QString path = file_info.absolutePath();    // 绝对路径
+
+    //后缀添加.
+    if(!suffix.isEmpty()){
+
+        suffix = "." + suffix;
+    }
+
+    //不存在则退出,就是没有遇到同名的文件
+    if(!QFile::exists(file_path)){
+
+        qDebug() << "File does not exist, return original:" << file_path;
+        return file_path;
+    }
+
+    // 尝试添加 (1), (2), (3)... 直到找到不存在的文件名
+    int count = 1;
+    QString new_file_path;
+
+    do{
+
+        new_file_path = QString("%1/%2(%3)%4").arg(path).arg(base_name).arg(count).arg(suffix);
+        count++;
+
+    }   while(QFile::exists(new_file_path));
+
+    qDebug() << "Returning unique path:" << new_file_path;
+    return new_file_path;
+
+}
 
 
 
@@ -702,6 +752,7 @@ void Book::shareFile()
 {
     //分享者，接收者，文件名，路径
     QListWidgetItem* item = bookList->currentItem();
+
     if(!item){
 
         return;
@@ -716,6 +767,7 @@ void Book::shareFile()
     //获得列表信息 将信息添加到sharefile.cpp
     ShareFile &share_file_instance = ShareFile::getInstance();
     share_file_instance.updateFriendList(friend_list);
+
     if(share_file_instance.isHidden()){
 
         share_file_instance.show();
@@ -764,8 +816,9 @@ void Book::handleShareResponse(PDU *pdu)
 /*************************************************************************************/
 void Book::showProgress(const QString &title, const QString &file_name)
 {
-    // ✅ 每次都重新创建，确保信号连接有效
+    // 每次都重新创建，确保信号连接有效
     if(m_progressDialog) {
+
         m_progressDialog->disconnect();
         m_progressDialog->close();
         m_progressDialog->deleteLater();
@@ -777,23 +830,34 @@ void Book::showProgress(const QString &title, const QString &file_name)
 
     // 连接取消信号
     connect(m_progressDialog, &ProgressDialog::cancelled, this, [this](){
+
         qDebug() << "=== cancelled 信号被触发 ===";
         qDebug() << "download_state:" << download_state;
         qDebug() << "upload_state:" << upload_state;
 
         if(download_state == Receiving) {
+
             qDebug() << "进入取消下载分支";
             cancelDownload();
-        } else if(upload_state == Uploading) {
+
+        }
+
+        else if(upload_state == Uploading) {
+
             qDebug() << "进入取消上传分支";
             cancelUpload();
-        } else {
+        }
+
+        else {
+
             qDebug() << "没有匹配的状态！";
         }
+
     }, Qt::QueuedConnection);
 
     // 连接销毁信号，清空指针
     connect(m_progressDialog, &QObject::destroyed, this, [this]() {
+
         m_progressDialog = nullptr;
         qDebug() << "进度条已销毁";
     });
@@ -865,6 +929,18 @@ void Book::cancelUpload()
 
 }
 
+void Book::handleUploadRespond(PDU *pdu)
+{
+    QString response = QString::fromUtf8(pdu->caData);
+    if (response.startsWith(FILE_UPLOAD_PROCESS) || response.startsWith(FILE_UPLOAD_RENAME)) {
+        // 服务器已准备好，开始发送数据
+        file_timer->start(1000);
+    } else if (response.startsWith(FILE_UPLOAD_FAIL)) {
+        QMessageBox::warning(this, "上传", "服务器准备失败");
+    }
+}
+
+
 void Book::sendCancelUploadRequest()
 {
 
@@ -928,3 +1004,4 @@ void Book::sendCancelDownloadRequest()
 
     delete pdu;
 }
+
