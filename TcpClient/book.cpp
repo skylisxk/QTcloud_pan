@@ -7,6 +7,7 @@
 #include "opewidget.h"
 #include "sharefile.h"
 #include <QCoreApplication>
+#include <QThread>
 
 Book::Book(QWidget *parent)
     : QWidget{parent}
@@ -41,7 +42,6 @@ Book::Book(QWidget *parent)
     mainLayout->addLayout(fileVBL);
 
     setLayout(mainLayout);
-    file_timer = new QTimer(this);
     file_recve_size = 0;
     file_total_size = 0;
     m_cancelUpload = false;
@@ -64,8 +64,38 @@ Book::Book(QWidget *parent)
     connect(bookList, &QListWidget::doubleClicked, this, &Book::enterDir);
     connect(downloadPB, &QAbstractButton::clicked, this, &Book::downloadFile);
     connect(sharePB, &QAbstractButton::clicked, this, &Book::shareFile);
-    connect(file_timer, &QTimer::timeout, this, &Book::uploadFileData);
 
+    // 初始化上传线程
+    m_uploadThread = new QThread(this);
+    m_uploadWorker = new UploadWorker();
+    m_uploadWorker->moveToThread(m_uploadThread);
+
+    // 连接信号槽
+    connect(m_uploadThread, &QThread::finished, m_uploadWorker, &QObject::deleteLater);
+    connect(m_uploadWorker, &UploadWorker::progressUpdated, this, &Book::onUploadProgress);
+    connect(m_uploadWorker, &UploadWorker::uploadFinished, this, &Book::onUploadFinished);
+    connect(m_uploadWorker, &UploadWorker::errorOccurred, this, &Book::onUploadError);
+
+    connect(m_uploadWorker, &UploadWorker::dataBlockReady,
+            this, [this](const QByteArray &data) {
+
+                // 如果上传状态不是 Uploading，说明已取消，忽略剩余数据块
+                if (upload_state != Uploading) {
+
+                    qDebug() << "线程中断";
+                    return;
+                }
+                // 确保在主线程中执行
+                QTcpSocket &socket = TcpClient::getInstance().getTcpSocket();
+                qint64 sent = socket.write(data);
+                if (sent != data.size()) {
+                    qDebug() << "socket write error, sent:" << sent;
+                    m_uploadWorker->cancelUpload(); // 可取消上传
+                    upload_state = uploadIdle;
+                }
+            }, Qt::QueuedConnection);
+
+    m_uploadThread->start();
 }
 
 Book::~Book()
@@ -73,9 +103,25 @@ Book::~Book()
 
     qDebug() << "Book 析构开始";
 
-    if(file_timer && file_timer->isActive()) {
-        file_timer->stop();
+    // 1. 停止 Worker 的上传任务
+    if (m_uploadWorker) {
+        m_uploadWorker->cancelUpload();      // 设置取消标志，使其停止发送新块
     }
+
+    // 2. 退出线程的事件循环并等待线程结束
+    if (m_uploadThread) {
+        m_uploadThread->quit();              // 通知线程退出事件循环
+        m_uploadThread->wait();              // 等待线程真正结束（避免资源未释放）
+    }
+
+    // 3. 断开所有信号连接，防止在析构过程中触发槽
+    if (m_uploadWorker) {
+        disconnect(m_uploadWorker, nullptr, this, nullptr);
+        // 也可以调用 deleteLater，但线程已停止，可直接删除
+        delete m_uploadWorker;
+        m_uploadWorker = nullptr;
+    }
+
 
     if(upload_file.isOpen()) {
         upload_file.close();
@@ -335,6 +381,8 @@ void Book::enterDir(const QModelIndex &index)
 }
 
 
+
+
 /**********************************************************************************
  * ********************************************************************************
  * ********************************************************************************
@@ -346,153 +394,148 @@ void Book::enterDir(const QModelIndex &index)
 
 void Book::uploadFile()
 {
-    //上传路径和文件
+
     QString cur_path = TcpClient::getInstance().curPath;
-    //要上传文件的路径,获取弹窗选中的路径
-    file_save_path = QFileDialog::getOpenFileName();
+    QString localFilePath = QFileDialog::getOpenFileName(this, "选择要上传的文件");
+    if (localFilePath.isEmpty()) return;
 
-    if(file_save_path.isEmpty()){
+    QFileInfo info(localFilePath);
+    QString fileName = info.fileName();
+    qint64 fileSize = info.size();
 
-        return;
-    }
+    // 保存文件路径和大小，供 Worker 使用
+    file_save_path = localFilePath;
+    upload_total = fileSize;
 
-    //将路径的文件名提取出来
-    int lastSlash = file_save_path.lastIndexOf('/');
-    QString file_name = file_save_path.mid(lastSlash+1);
-
-    //上传文件的大小
-    upload_file.setFileName(file_save_path);
-
-    if(!upload_file.open(QIODevice::ReadOnly)){
-
-        QMessageBox::warning(this, "上传文件", "打开失败");
-        return;
-    }
-
-    upload_total = upload_file.size();
-    upload_sent = 0;
-    upload_state = Uploading;
-
-    qDebug() << "upload_state 设置为:" << upload_state;
-
-
-    PDU* pdu = makePDU(cur_path.toUtf8().size()+1);
+    // 发送上传请求
+    PDU* pdu = makePDU(cur_path.toUtf8().size() + 1);
     pdu->uiMsgType = ENUM_MSG_TYPE_UPLOAD_REQUEST;
-    //发送当前路径
     qstrncpy((char*)pdu->caMsg, cur_path.toUtf8().constData(), pdu->uiMsglen);
-    //发送大小和文件名
-    QString dataStr = QString("%1|%2").arg(file_name).arg(upload_total);
+    QString dataStr = QString("%1|%2").arg(fileName).arg(fileSize);
     qstrncpy(pdu->caData, dataStr.toUtf8().constData(), 64);
-
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
     delete pdu;
 
+    upload_state = Uploading;
 
-    //显示进度条
-    showProgress("正在上传", file_name);
-
-    //设置定时器，避免内容黏连
-    //file_timer->start(1000);
+    // 显示进度条，等待服务器确认
+    showProgress("正在上传", fileName);
+    // 注意：不要启动任何定时器
 }
 
-void Book::uploadFileData()
+
+void Book::handleUploadRespond(PDU* pdu)
 {
-    //上传过程中会反复调用这个函数
-
-    if(m_cancelUpload){
-
-        qDebug() << "上传已被取消，终止";
+    QString response = QString::fromUtf8(pdu->caData);
+    QStringList parts = response.split('|');
+    if (parts.size() < 2) {
+        QMessageBox::warning(this, "上传", "服务器响应格式错误");
+        hideProgress();
         return;
     }
 
-    if(upload_state != Uploading){
+    QString status = parts[0];
+    QString actualFileName = parts[1];
 
-        qDebug() << "上传已被取消，终止";
-        return;
+    if (status == FILE_UPLOAD_PROCESS || status == FILE_UPLOAD_RENAME) {
+        if (status == FILE_UPLOAD_RENAME) {
+            QMessageBox::information(this, "提示", QString("文件已重命名为: %1").arg(actualFileName));
+        }
+
+        // 使用新的 Worker 接口：只设置文件路径
+        m_uploadWorker->setFile(file_save_path);
+        // 不需要 setSocket，因为数据会通过 dataBlockReady 信号传回主线程发送
+        m_uploadWorker->startUpload();
+
+        // 可选：设置一个标志表示正在上传，用于进度条取消等
+    } else if (status == FILE_UPLOAD_FAIL) {
+        QMessageBox::warning(this, "上传", "服务器准备失败");
+        hideProgress();
+    }
+}
+
+void Book::sendCancelUploadRequest()
+{
+
+    qDebug() << "=== sendCancelUploadRequest 被调用 ===";
+
+    PDU* pdu = makePDU();
+    pdu->uiMsgType = ENUM_MSG_TYPE_UPLOAD_CANCEL_REQUEST;
+
+    qDebug() << "发送消息类型:" << pdu->uiMsgType;
+    qDebug() << "PDU长度:" << pdu->uiPDUlen;
+
+    qint64 sent = TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
+    qDebug() << "实际发送字节数:" << sent;
+
+    TcpClient::getInstance().getTcpSocket().flush();
+
+    delete pdu;
+
+}
+
+void Book::cancelUpload()
+{
+
+    qDebug() << "CancelUpload调用";
+
+    if (upload_state != Uploading) return;
+
+    upload_state = uploadIdle;
+    m_cancelUpload = true;
+
+    // 1. 通知服务器取消上传
+    sendCancelUploadRequest();
+
+    // 2. 通知 Worker 停止读取文件
+    if (m_uploadWorker) {
+        m_uploadWorker->cancelUpload();
     }
 
+    // // 3. 将进度条设置为中断状态（不立即隐藏，等待 Worker 响应）
+    // if (m_progressDialog) {
+    //     m_progressDialog->setInterrupt();  // 显示“已中断”
+    // }
 
+}
 
-    file_timer->stop();
+void Book::onUploadProgress(int percent)
+{
+    if (m_progressDialog) {
 
-    char buffer[64 * 1024];  // 使用栈数组，避免手动内存管理
-    const int BATCH_SIZE = 5;  // 一次定时器发送5块
-    int sentCount = 0;
-    bool hasError = false;
-
-
-    qDebug() << "开始上传文件，大小:" << upload_total << "字节";
-
-    while(!upload_file.atEnd() && sentCount < BATCH_SIZE) {
-        // 读取数据块
-        qint64 bytesRead = upload_file.read(buffer, sizeof(buffer));
-
-        if(bytesRead > 0) {
-            // 发送数据块
-            qint64 bytesSent = TcpClient::getInstance().getTcpSocket().write(buffer, bytesRead);
-
-            if(bytesSent != bytesRead) {
-                qDebug() << "发送不完整:" << bytesSent << "/" << bytesRead;
-                QMessageBox::warning(this, "上传文件", "网络发送失败");
-                hasError = true;
-                break;
-            }
-
-            upload_sent += bytesSent;
-            sentCount++;
-
-            // 等待数据发送完成，避免TCP缓冲区溢出
-            TcpClient::getInstance().getTcpSocket().flush();
-
-            //更新进度
-            updateProgress(upload_sent, upload_total);
-            int progress = (upload_sent * 100) / upload_total;
-            qDebug() << "上传进度:" << progress << "%";
-
-        }
-
-        else if(bytesRead == 0) {
-
-            // 正常结束
-
-            break;
-        }
-
-        else {
-
-            hasError = true;
-            qDebug() << "读文件失败，错误:" << upload_file.errorString();
-            QMessageBox::warning(this, "上传文件", "读文件失败: " + upload_file.errorString());
-            break;
-        }
+        m_progressDialog->setProgress(percent, 100);
     }
+}
 
-    //上传完成，或者发生错误
-    if(upload_file.atEnd() || hasError) {
+void Book::onUploadFinished(bool success, const QString &message)
+{
+    hideProgress();
 
-        upload_state = uploadIdle;
-        upload_file.close();
+    upload_state = uploadIdle;
+    m_cancelUpload = false;
 
-        // ✅ 上传完成后，停止定时器并清理
-        if(file_timer && file_timer->isActive()) {
-            file_timer->stop();
-        }
+    if (success) {
 
-        if(!hasError) {
-            updateProgress(upload_sent, upload_total);
-
-            // ✅ 延迟隐藏进度条，避免在事件循环中删除
-            QTimer::singleShot(500, this, [this]() {
-                hideProgress();
-            });
-            qDebug() << "上传完成";
-        }
+        QMessageBox::information(this, "上传", message);
+        QTimer::singleShot(500, this, &Book::flushFile); // 延迟刷新
     }
-
     else {
-        // 继续上传
-        file_timer->start(50);
+
+        QMessageBox::warning(this, "上传", message);
     }
+
+
+}
+
+void Book::onUploadError(const QString &error)
+{
+    hideProgress();
+
+    upload_state = uploadIdle;
+
+    m_cancelUpload = false;
+
+    QMessageBox::warning(this, "上传错误", error);
 
 }
 
@@ -828,6 +871,11 @@ void Book::showProgress(const QString &title, const QString &file_name)
     m_progressDialog = new ProgressDialog(this);
     m_progressDialog->setAttribute(Qt::WA_DeleteOnClose);
 
+    //非模态，能同时进行其他操作
+    m_progressDialog->setModal(false);
+    m_progressDialog->setWindowModality(Qt::NonModal); // 确保不阻塞
+
+
     // 连接取消信号
     connect(m_progressDialog, &ProgressDialog::cancelled, this, [this](){
 
@@ -893,73 +941,6 @@ void Book::hideProgress()
 
 }
 
-void Book::cancelUpload()
-{
-    m_cancelUpload = true;
-
-    //停止定时器
-    if(file_timer && file_timer->isActive()){
-
-        file_timer->stop();
-    }
-
-    //关闭文件
-    if(upload_file.isOpen()){
-
-        upload_file.close();
-    }
-
-    //通知服务器取消上传
-    sendCancelUploadRequest();
-
-    //重置状态
-    upload_state = uploadIdle;
-
-    QTimer::singleShot(1000, this, [this]() {
-
-        hideProgress();
-
-        //重置状态
-        m_cancelUpload = false;
-        QMessageBox::information(this, "上传", "上传已取消");
-        qDebug() << "上传已取消完成";
-    });
-
-    qDebug() << "上传已取消";
-
-}
-
-void Book::handleUploadRespond(PDU *pdu)
-{
-    QString response = QString::fromUtf8(pdu->caData);
-    if (response.startsWith(FILE_UPLOAD_PROCESS) || response.startsWith(FILE_UPLOAD_RENAME)) {
-        // 服务器已准备好，开始发送数据
-        file_timer->start(1000);
-    } else if (response.startsWith(FILE_UPLOAD_FAIL)) {
-        QMessageBox::warning(this, "上传", "服务器准备失败");
-    }
-}
-
-
-void Book::sendCancelUploadRequest()
-{
-
-    qDebug() << "=== sendCancelUploadRequest 被调用 ===";
-
-    PDU* pdu = makePDU();
-    pdu->uiMsgType = ENUM_MSG_TYPE_UPLOAD_CANCEL_REQUEST;
-
-    qDebug() << "发送消息类型:" << pdu->uiMsgType;
-    qDebug() << "PDU长度:" << pdu->uiPDUlen;
-
-    qint64 sent = TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
-    qDebug() << "实际发送字节数:" << sent;
-
-    TcpClient::getInstance().getTcpSocket().flush();
-
-    delete pdu;
-
-}
 
 void Book::cancelDownload(){
 

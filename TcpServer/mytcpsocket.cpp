@@ -82,25 +82,17 @@ void MyTcpSocket::setThreadPool(ThreadPool *pool)
     m_threadPool = pool;
 }
 
-
 void MyTcpSocket::onReadyRead()
 {
-
-    qDebug() << "onReadyRead triggered, upload_state=" << upload_state;
-
-
     if (m_isClosing) return;
 
-    const int MAX_PDU = 10;  // 每次最多处理 10 个 PDU
+    // 1. 优先处理协议消息（包括取消请求）
+    const int MAX_PDU = 10;
     int processed = 0;
-
     while (bytesAvailable() >= sizeof(unsigned int) && processed < MAX_PDU) {
-
         unsigned int testLen = 0;
         peek((char*)&testLen, sizeof(unsigned int));
-
         if (testLen >= sizeof(PDU) && testLen <= 10 * 1024 * 1024) {
-
             if (!tryParsePDU()) break;
             processed++;
         } else {
@@ -108,8 +100,23 @@ void MyTcpSocket::onReadyRead()
         }
     }
 
+    // 2. 处理文件数据（上传）
     if (upload_state == Receiving && bytesAvailable() > 0) {
-        handleUploadData();   // 调用原有函数，不要自己重复实现
+        // 限制单次读取大小，避免阻塞协议消息处理
+        const qint64 MAX_CHUNK = 64 * 1024;
+        QByteArray data;
+        if (bytesAvailable() > MAX_CHUNK) {
+            data = read(MAX_CHUNK);
+        } else {
+            data = readAll();
+        }
+        if (!data.isEmpty()) {
+            q_file.write(data);
+            file_recve += data.size();
+            if (file_recve >= file_recve_total) {
+                handleUploadComplete();
+            }
+        }
     }
 }
 
@@ -174,6 +181,8 @@ void MyTcpSocket::receiveMsg()
         free(pdu);
         return;
     }
+
+
 
     qDebug() << "收到消息类型:" << pdu->uiMsgType;
 
@@ -880,49 +889,30 @@ void MyTcpSocket::handleUploadRequest(PDU *pdu)
 // 处理文件上传数据
 void MyTcpSocket::handleUploadData()
 {
-    if(m_cancelUpload) {
+    if (upload_state != Receiving) return;
 
-        qDebug() << "上传已被取消，忽略数据";
-        readAll();  // 清空缓冲区
-        return;
+    // 限制单次读取大小，避免阻塞
+    const qint64 MAX_CHUNK = 64 * 1024;  // 64KB
+    QByteArray buffer;
+    if (bytesAvailable() > MAX_CHUNK) {
+        buffer = read(MAX_CHUNK);
+    } else {
+        buffer = readAll();
     }
+    if (buffer.isEmpty()) return;
 
-    if(upload_state != Receiving) {
-
-        qDebug() << "错误：非接收状态进入handleUploadData";
-        return;
-    }
-
-
-    QByteArray buffer = readAll();
-
-    if(buffer.isEmpty()) return;
-
-    qDebug() << "收到文件数据:" << buffer.size() << "字节";
-
-    /*原版没有线程池*/
     qint64 written = q_file.write(buffer);
-
-    if(written != buffer.size()) {
-
-        qDebug() << "写入文件失败";
+    if (written != buffer.size()) {
         handleUploadError();
         return;
     }
 
     file_recve += written;
-    qDebug() << "进度:" << file_recve << "/" << file_recve_total;
-
-    // 检查是否完成
-    if(file_recve >= file_recve_total) {
-
-        qDebug() << "文件接收完成，准备调用handleUploadComplete";
-
-        // 使用定时器延迟执行，避免在当前调用栈中处理
-        QTimer::singleShot(0, this, &MyTcpSocket::handleUploadComplete);
+    if (file_recve >= file_recve_total) {
+        handleUploadComplete();   // 直接调用，重置状态
     }
-
 }
+
 
 void MyTcpSocket::handleUploadComplete()
 {

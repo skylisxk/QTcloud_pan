@@ -12,6 +12,7 @@
 #include "threadpool.h"
 #include "progressdialog.h"
 #include <QPointer>
+#include "uploadworker.h"
 
 
 class Book : public QWidget
@@ -25,7 +26,6 @@ public:
     void updateFileList(const PDU* pdu);
 
     //上传
-    QTimer *file_timer;
     qint64 file_total_size;
     qint64 file_recve_size;
     void handleUploadRespond(PDU* pdu);
@@ -62,11 +62,17 @@ public slots:
     void renameDirFile();
     void backDir();
     void uploadFile();
-    void uploadFileData();
     void downloadFile();
     void shareFile();
     void enterDir(const QModelIndex &index);
 
+
+private slots:
+
+    //上传
+    void onUploadProgress(int percent);
+    void onUploadFinished(bool success, const QString& message);
+    void onUploadError(const QString& error);
 
 private:
     QListWidget* bookList;
@@ -87,14 +93,16 @@ private:
     qint64 upload_total;
     bool m_cancelUpload;            // 取消上传标志
     void cancelUpload();
+    QThread* m_uploadThread;
+    UploadWorker* m_uploadWorker;
 
     //下载
     QFile download_file;           // 下载文件
     qint64 download_total;         // 文件总大小
     qint64 download_received;      // 已接收大小
     void cancelDownload();
-    bool m_cancelDownload; // 取消下载标志
-    QString getUniqueName(const QString& file_path);    //重复命名
+    bool m_cancelDownload;          // 取消下载标志
+    QString getUniqueName(const QString& file_path);        //重复命名
 
     ThreadPool* m_threadPool;
 

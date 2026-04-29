@@ -1,0 +1,73 @@
+    //获取文件夹名和目录名
+    QList<QListWidgetItem*> checked_items;
+
+    //把bookList的勾选的项目添加进items
+    for(int i = 0; i < bookList->count(); i++){
+
+        QListWidgetItem* item = bookList->item(i);
+
+        if(item->checkState() == Qt::Checked){
+
+            checked_items.append(item);
+        }
+
+    }
+
+    if (checked_items.isEmpty()) {
+        QMessageBox::warning(this, "删除", "请先勾选要删除的文件或文件夹");
+        return;
+    }
+
+    // 弹出确认对话框
+    QMessageBox::StandardButton reply = QMessageBox::question(
+        this, "确认删除",
+        QString("确定要删除选中的 %1 个项目吗？").arg(checked_items.size()),
+        QMessageBox::Yes | QMessageBox::No);
+
+    if(reply != QMessageBox::Yes){
+
+        return;
+    }
+
+    // 禁用删除按钮，防止重复点击
+    removeDirFilePB->setEnabled(false);
+
+    QString cur_path = TcpClient::getInstance().curPath;
+    int total = checked_items.size();
+    int sent = 0;
+
+    // 使用定时器分批发送，避免一次发送过多, 50ms发送
+    QTimer* batch_timer = new QTimer(this);
+    batch_timer->setInterval(50);
+
+    connect(batch_timer, &QTimer::timeout, [=]() mutable {
+
+        if(sent >= total){
+
+            batch_timer->stop();
+            batch_timer->deleteLater();
+            removeDirFilePB->setEnabled(true);
+            flushFile(); // 所有删除请求发送完后刷新列表
+            return;
+        }
+
+        QListWidgetItem* item = checked_items[sent];
+
+        QString file_name = item->text();
+
+        PDU* pdu = makePDU(cur_path.toUtf8().size()+1);
+
+        pdu->uiMsgType = ENUM_MSG_TYPE_DELETE_DIR_FILE_REQUEST;
+        qstrncpy(pdu->caData, file_name.toUtf8().constData(), 64);
+        qstrncpy((char*)pdu->caMsg, cur_path.toUtf8().constData(), pdu->uiMsglen);
+
+        TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
+
+        delete pdu;
+
+        sent++;
+
+    });
+
+    batch_timer->start();
+

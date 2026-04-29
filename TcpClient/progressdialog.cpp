@@ -67,18 +67,20 @@ void ProgressDialog::setFileName(const QString &file_name)
 
 void ProgressDialog::setProgress(qint64 current, qint64 total)
 {
-    if(m_isFinished){
-
-        return;
-    }
+    if (m_isFinished) return;
 
     int percent = (current * 100) / total;
-
     m_progressBar->setValue(percent);
     m_percentLabel->setText(QString("%1%").arg(percent));
-    //格式化输出
-    m_detailLabel->setText(QString("已传输: %1 / %2").arg(formatSize(current)).arg(formatSize(total)));
 
+    // 特殊处理：当 total == 100 时，认为 current 是百分数，不显示字节
+    if (total == 100) {
+        m_detailLabel->setText(QString("已传输: %1%").arg(current));
+    } else {
+        m_detailLabel->setText(QString("已传输: %1 / %2")
+                                   .arg(formatSize(current))
+                                   .arg(formatSize(total)));
+    }
 }
 
 void ProgressDialog::setFinished()

@@ -22,7 +22,8 @@ SOURCES += \
     protocol.cpp \
     sharefile.cpp \
     tcpclient.cpp \
-    threadpool.cpp
+    threadpool.cpp \
+    uploadworker.cpp
 
 HEADERS += \
     book.h \
@@ -34,7 +35,8 @@ HEADERS += \
     protocol.h \
     sharefile.h \
     tcpclient.h \
-    threadpool.h
+    threadpool.h \
+    uploadworker.h
 
 FORMS += \
     online.ui \

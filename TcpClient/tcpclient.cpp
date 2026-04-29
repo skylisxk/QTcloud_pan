@@ -322,7 +322,7 @@ void TcpClient::receiveMsg()
     case ENUM_MSG_TYPE_UPLOAD_PROCESS:{                                     //上传处理
 
         qDebug() << "Received upload ready, starting data transmission";
-        book->file_timer->start(1000); // 直接启动定时器
+        book->handleUploadRespond(pdu);
         break;
     }
 
