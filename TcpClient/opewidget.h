@@ -12,7 +12,10 @@ class OpeWidget : public QWidget
 {
     Q_OBJECT
 public:
+
     explicit OpeWidget(QWidget *parent = nullptr);
+    ~OpeWidget();
+
     static OpeWidget& getInstance();                        //单例模式
     Friend* getFriend();
     Book* getBook();

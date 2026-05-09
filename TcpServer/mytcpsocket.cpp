@@ -840,7 +840,7 @@ void MyTcpSocket::handleUploadRequest(PDU *pdu)
     // 准备文件
     QString full_path = path + '/' + original_file_name;
 
-    // 使用封装函数生成唯一路径
+    // 文件名相同的时候添加(1)
     QString unique_path = getUniqueName(full_path);
     q_file.setFileName(unique_path);
 
@@ -877,7 +877,7 @@ void MyTcpSocket::handleUploadRequest(PDU *pdu)
     qDebug() << "开始接收文件:" << full_path;
 
 
-    // 重要：立即检查是否有数据（可能请求和数据一起到达）
+    // 立即检查是否有数据（可能请求和数据一起到达）
     if(bytesAvailable() > 0) {
 
         qDebug() << "立即处理已有数据";
@@ -889,27 +889,42 @@ void MyTcpSocket::handleUploadRequest(PDU *pdu)
 // 处理文件上传数据
 void MyTcpSocket::handleUploadData()
 {
+    qDebug() << "handleUploadData调用";
+
     if (upload_state != Receiving) return;
 
     // 限制单次读取大小，避免阻塞
     const qint64 MAX_CHUNK = 64 * 1024;  // 64KB
     QByteArray buffer;
+
+    // 读取缓冲区数据块
     if (bytesAvailable() > MAX_CHUNK) {
+
         buffer = read(MAX_CHUNK);
-    } else {
+    }
+    else {
+
         buffer = readAll();
     }
+
     if (buffer.isEmpty()) return;
 
+    // 写入服务器文件，并返回字节大小
     qint64 written = q_file.write(buffer);
+
+    // 大小不同说明写入失败
     if (written != buffer.size()) {
         handleUploadError();
         return;
     }
 
     file_recve += written;
+
+    qDebug() << file_recve << " total: " << file_recve_total;
+
+    // 写入完成
     if (file_recve >= file_recve_total) {
-        handleUploadComplete();   // 直接调用，重置状态
+        handleUploadComplete();
     }
 }
 
@@ -1008,7 +1023,7 @@ QString MyTcpSocket::getUniqueName(const QString &file_path)
     QFileInfo file_info(file_path);
     QString base_name = file_info.completeBaseName();   // 前缀名
     QString suffix = file_info.suffix();        // 后缀名
-    QString path = file_info.absolutePath();    // 绝对路径
+    QString path = file_info.path();    // 绝对路径
 
     //后缀添加.
     if(!suffix.isEmpty()){
@@ -1086,9 +1101,7 @@ void MyTcpSocket::handleDownloadRequest(PDU *pdu)
     addHelper(res_pdu, dataStr.toUtf8().constData(), ENUM_MSG_TYPE_DOWNLOAD_RESPOND);
     delete res_pdu;
 
-
-
-    // ✅ 启动定时器，每 10ms 发送一块
+    // 启动定时器，每 10ms 发送一块
     m_downloadTimer->start(10);
 
     qDebug() << "开始下载，文件大小:" << file_size;
@@ -1100,18 +1113,17 @@ void MyTcpSocket::sendNextChunk()
         qDebug() << "下载已取消，忽略后续数据";
         return;
     }
-
     if(!download_file || download_state != d_receiving) {
         return;
     }
-
     if(download_file->atEnd()) {
         finishDownload();
         return;
     }
 
-    char buffer[64 * 1024];
-    qint64 bytes_read = download_file->read(buffer, sizeof(buffer));
+
+    char buffer[64 * 1024];         // 一次读取64KB
+    qint64 bytes_read = download_file->read(buffer, sizeof(buffer));       //实际读取文件的字节数
 
     if(bytes_read <= 0) {
         finishDownload();
@@ -1120,19 +1132,25 @@ void MyTcpSocket::sendNextChunk()
 
     PDU* data_pdu = makePDU(bytes_read);
     data_pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_PROCESS;
-    memcpy(data_pdu->caMsg, buffer, bytes_read);
+    memcpy(data_pdu->caMsg, buffer, bytes_read);                    // 将读取到的文件块放到pdu
 
-    qint64 total_len = data_pdu->uiPDUlen;
-    qint64 bytes_sent = write((char*)data_pdu, total_len);
+    qint64 total_len = data_pdu->uiPDUlen;                          // 实际pdu长度
+    qint64 bytes_sent = write((char*)data_pdu, total_len);          // 发送pdu,返回实际发送的字节
 
+    // 相同说明发送成功
     if(bytes_sent == total_len) {
+
         download_sent += bytes_read;
 
         // 每发送 1MB 打印一次进度
         if(download_sent % (1024 * 1024) == 0 || download_sent == download_total) {
+
             qDebug() << "下载进度:" << download_sent << "/" << download_total;
         }
-    } else {
+    }
+
+    else {
+
         qDebug() << "发送失败，期望:" << total_len << "实际:" << bytes_sent;
         delete data_pdu;
         handleDownloadError("send failed");

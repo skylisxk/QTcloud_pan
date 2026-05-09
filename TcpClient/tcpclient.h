@@ -27,6 +27,12 @@ public:
     //单例模式
     static TcpClient& getInstance();
     QTcpSocket& getTcpSocket();
+    QString getServerIp();
+    quint16 getServerPort();
+
+    //清空残留数据
+    void clearSocketBuffer();
+
     //记录当前登录的用户名
     QString loginName;
     //记录文件夹路径
@@ -61,6 +67,9 @@ private:
 
     //线程池
     ThreadPool m_threadPool;
+
+    void handlePdu(PDU* pdu);
+
 
 };
 #endif // TCPCLIENT_H

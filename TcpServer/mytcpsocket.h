@@ -61,7 +61,7 @@ private:
     //上传
     QFile q_file;
     bool m_cancelUpload;
-    //文件接收量，需要接收的总大小
+    //文件接收量，需要接收的总大小，用来判断是否结束传输
     qint64 file_recve, file_recve_total;
     //判断文件状态
     FileUploadState upload_state;

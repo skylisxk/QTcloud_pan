@@ -6,8 +6,8 @@ OpeWidget::OpeWidget(QWidget *parent)
     listWidget->addItem("好友");
     listWidget->addItem("图书");
 
-    pFriend = new Friend;
-    pBook = new Book;
+    pFriend = new Friend(this);
+    pBook = new Book(this);
 
     //设置显示的窗口
     pSW = new QStackedWidget;
@@ -31,6 +31,23 @@ OpeWidget::OpeWidget(QWidget *parent)
     //切换页的时候刷新
     connect(listWidget, &QListWidget::currentRowChanged,
             this, &OpeWidget::onTabChanged);
+}
+
+OpeWidget::~OpeWidget()
+{
+
+    qDebug() << "OpeWidget 析构";
+    // 断开所有信号，避免在析构中触发
+    disconnect();
+    // 手动删除子对象，确保它们在 QApplication 还存在时销毁
+    delete pFriend;
+    delete pBook;
+    delete listWidget;
+    delete refreshTimer;
+    // 注意：不要 delete pSW，因为它可能是其他对象的父对象？确保安全
+    pFriend = nullptr;
+    pBook = nullptr;
+
 }
 
 OpeWidget &OpeWidget::getInstance()

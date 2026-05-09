@@ -13,6 +13,7 @@
 #include "progressdialog.h"
 #include <QPointer>
 #include "uploadworker.h"
+#include "downloadworker.h"
 
 
 class Book : public QWidget
@@ -39,12 +40,10 @@ public:
         Completed
     };
     FileDownloadState download_state;
-    void handleDownloadRespond(PDU* pdu);
-    void handleDownloadComplete();
-    void handleDownloadError(PDU* pdu);
-    void sendDownloadResponse(const char* status);
-    void handleDownloadData(PDU* pdu);
-    void handleDownloadRawData(const QByteArray& data);
+    void handleDownloadRespond(PDU* pdu);           // 解析服务器响应，启动 Worker
+    void handleDownloadProcess(PDU* pdu);           // 处理服务器发出的文件
+    DownloadWorker* getDownloadWorker() const { return m_downloadWorker; }
+
 
     //分享
     void handleShareResponse(PDU* pdu);
@@ -74,6 +73,11 @@ private slots:
     void onUploadFinished(bool success, const QString& message);
     void onUploadError(const QString& error);
 
+    //下载
+    void onDownloadProgress(qint64 received, qint64 total);
+    void onDownloadFinished(bool success, const QString &message);
+    void onDownloadError(const QString &error);
+
 private:
     QListWidget* bookList;
     QPushButton *backPB, *createPB, *renamePB, *flushPB,
@@ -91,17 +95,15 @@ private:
     QFile upload_file;             // 上传文件
     qint64 upload_sent;
     qint64 upload_total;
-    bool m_cancelUpload;            // 取消上传标志
     void cancelUpload();
     QThread* m_uploadThread;
     UploadWorker* m_uploadWorker;
 
     //下载
-    QFile download_file;           // 下载文件
-    qint64 download_total;         // 文件总大小
-    qint64 download_received;      // 已接收大小
+    QThread* m_downloadThread;
+    DownloadWorker* m_downloadWorker;
+    qint64 m_downloadTotal;      // 文件总大小（从服务器响应获得）
     void cancelDownload();
-    bool m_cancelDownload;          // 取消下载标志
     QString getUniqueName(const QString& file_path);        //重复命名
 
     ThreadPool* m_threadPool;

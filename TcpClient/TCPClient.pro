@@ -13,6 +13,7 @@ LIBS += -pthread
 
 SOURCES += \
     book.cpp \
+    downloadworker.cpp \
     friend.cpp \
     main.cpp \
     online.cpp \
@@ -27,6 +28,7 @@ SOURCES += \
 
 HEADERS += \
     book.h \
+    downloadworker.h \
     friend.h \
     online.h \
     opewidget.h \

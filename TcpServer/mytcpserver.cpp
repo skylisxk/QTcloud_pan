@@ -20,10 +20,12 @@ MyTcpServer::~MyTcpServer()
 
 MyTcpServer &MyTcpServer::getInstance()
 {
+    //单例模式
     static MyTcpServer instance;
     return instance;
 }
 
+//QTcpServer 的虚函数，当有新客户端连接时自动被调用
 void MyTcpServer::incomingConnection(qintptr socketDescriptor)
 {
     qDebug() << "新客户端连接，描述符:" << socketDescriptor;
@@ -31,20 +33,26 @@ void MyTcpServer::incomingConnection(qintptr socketDescriptor)
     // ✅ 在主线程创建 socket
     MyTcpSocket* p_tcpSocket = new MyTcpSocket();
 
+    //让 Qt 的 Socket 对象接管这个原生句柄
     if(p_tcpSocket->setSocketDescriptor(socketDescriptor)) {
+
         qDebug() << "客户端连接成功";
 
         // 线程池只用于文件传输等耗时操作
         p_tcpSocket->setThreadPool(&m_threadPool);
 
         {
+
             std::lock_guard<std::mutex> lock(m_threadPool.getMutex());
             tcpSocketList.append(p_tcpSocket);
         }
 
         connect(p_tcpSocket, &MyTcpSocket::offline,
                 this, &MyTcpServer::deleteSocket);
-    } else {
+
+    }
+    else {
+
         delete p_tcpSocket;
     }
 }
@@ -78,12 +86,6 @@ void MyTcpServer::deleteSocket(MyTcpSocket *mySocket)
         qDebug() << "Socket已删除";
     }
 
-    // 调试输出
-    // for (MyTcpSocket* socket : tcpSocketList) {
-    //     if (socket) {  // 安全检查
-    //         qDebug() << socket->getName();
-    //     }
-    // }
 }
 
 void MyTcpServer::checkDeadConnections()

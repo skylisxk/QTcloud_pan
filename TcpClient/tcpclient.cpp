@@ -46,10 +46,17 @@ TcpClient::~TcpClient()
 {
     qDebug() << "TcpClient 析构开始";
 
-    // 先清理 Book
+    //清理
     if(book) {
+
         delete book;
         book = nullptr;
+    }
+
+    if(pFriend){
+
+        delete pFriend;
+        pFriend = nullptr;
     }
 
     // 关闭 socket
@@ -95,41 +102,54 @@ QTcpSocket &TcpClient::getTcpSocket()
     return tcpSocket;
 }
 
+QString TcpClient::getServerIp()
+{
+    return ip;
+}
+
+quint16 TcpClient::getServerPort()
+{
+    return port;
+}
+
+void TcpClient::onReadyRead()
+{
+    receiveMsg();   // 原函数，处理一个PDU
+
+}
+
 
 void TcpClient::receiveMsg()
 {
 
-    qDebug() << "=== receiveMsg 被调用 ===";
-    qDebug() << "可用数据:" << tcpSocket.bytesAvailable();
-
-    // 先 peek PDU 长度
-    if(tcpSocket.bytesAvailable() < sizeof(unsigned int)) {
-        qDebug() << "数据不足，等待";
-        return;
-    }
+    // 只负责读取一个 PDU，然后调用 handlePdu
+    if (tcpSocket.bytesAvailable() < sizeof(unsigned int)) return;
 
     unsigned int uiPDUlen = 0;
-    tcpSocket.peek((char*)&uiPDUlen, sizeof(unsigned int));
-    qDebug() << "peek PDU长度:" << uiPDUlen;
 
-    // 检查是否是下载数据
-    if(uiPDUlen < sizeof(PDU) || uiPDUlen > 10 * 1024 * 1024) {
-        qDebug() << "非法PDU长度，可能是文件数据";
-        // 直接读取所有数据作为文件数据处理
-        QByteArray data = tcpSocket.readAll();
-        if(book && book->download_state == Book::Receiving) {
-            qDebug() << "直接处理文件数据，大小:" << data.size();
-            book->handleDownloadRawData(data);
-        }
+    tcpSocket.peek((char*)&uiPDUlen, sizeof(unsigned int));
+    if (uiPDUlen < sizeof(PDU) || uiPDUlen > 10*1024*1024) {
+
+        // 非法，跳过字节
+        char c;
+        tcpSocket.read(&c, 1);
         return;
     }
+    if (tcpSocket.bytesAvailable() < uiPDUlen) return;
 
-    // 正常 PDU 解析
     unsigned int uiMsgLen = uiPDUlen - sizeof(PDU);
     PDU* pdu = makePDU(uiMsgLen);
     tcpSocket.read((char*)pdu, uiPDUlen);
 
-    qDebug() << "收到消息类型:" << pdu->uiMsgType;
+    handlePdu(pdu);
+
+    free(pdu);
+
+}
+
+
+void TcpClient::handlePdu(PDU* pdu){
+
 
     switch(pdu->uiMsgType){
 
@@ -225,7 +245,7 @@ void TcpClient::receiveMsg()
         memcpy(res_pdu->caData, pdu->caData, 32);                          //将des_name传入到respdu
 
         (check == QMessageBox::Yes) ? res_pdu->uiMsgType = ENUM_MSG_TYPE_ADD_FRIEND_AGREE :
-                                    res_pdu->uiMsgType = ENUM_MSG_TYPE_ADD_FRIEND_REFUSE;
+            res_pdu->uiMsgType = ENUM_MSG_TYPE_ADD_FRIEND_REFUSE;
 
         tcpSocket.write((char*)res_pdu, res_pdu->uiPDUlen);
 
@@ -338,25 +358,35 @@ void TcpClient::receiveMsg()
 
     case ENUM_MSG_TYPE_DOWNLOAD_RESPOND:{                                   //下载回复
 
+        qDebug() << "Receive DOWNLOAD_RESPOND, book=" << book;
+
         book->handleDownloadRespond(pdu);
         break;
     }
 
     case ENUM_MSG_TYPE_DOWNLOAD_ERROR:{                                     //下载报错
 
-        book->handleDownloadError(pdu);
+        // 将错误信息传递给 Book（可由 Worker 的错误信号处理，这里直接通知界面）
+        QString errorMsg = QString::fromUtf8(pdu->caData);
+
+        QMetaObject::invokeMethod(book, "onDownloadError",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(QString, errorMsg));
+
         break;
     }
 
     case ENUM_MSG_TYPE_DOWNLOAD_FINISH:{                                    //下载完成
 
-        book->handleDownloadComplete();
+        qDebug() << "Received DOWNLOAD_FINISH from server, ignore";
+
         break;
     }
 
     case ENUM_MSG_TYPE_DOWNLOAD_PROCESS:{                                   //下载处理
 
-        book->handleDownloadData(pdu);
+        book->handleDownloadProcess(pdu);
+
         break;
     }
 
@@ -383,17 +413,16 @@ void TcpClient::receiveMsg()
         break;
 
     }
-
-    free(pdu);
-    pdu = nullptr;
-
 }
 
-void TcpClient::onReadyRead()
+void TcpClient::clearSocketBuffer()
 {
-    qDebug() << "onReadyRead 被调用，可用数据:" << tcpSocket.bytesAvailable() << "字节";
-    receiveMsg();
+    while (tcpSocket.bytesAvailable() > 0) {
+        tcpSocket.readAll();
+    }
+    qDebug() << "Socket buffer cleared";
 }
+
 
 void TcpClient::onConnected()
 {
