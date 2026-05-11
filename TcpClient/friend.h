@@ -11,6 +11,7 @@
 #include "online.h"
 #include "protocol.h"
 #include "threadpool.h"
+#include <QStackedWidget>
 
 class Friend : public QWidget
 {
@@ -50,6 +51,8 @@ private:
     Online* pOnline;                                            //需要一个Online的对象来操作，显示输出框
 
     ThreadPool* m_threadPool;
+
+    QStackedWidget* pFriendStackWidget;
 
 };
 

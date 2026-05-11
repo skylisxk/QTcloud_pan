@@ -233,7 +233,7 @@ void Book::updateFileList(const PDU *pdu)
     }
 
     else{
-        // 文件较少，直接在主线程处理（原有逻辑）
+        // 文件较少，直接在主线程处理
         bookList->clear();
 
         for(int i = 0; i < file_count; i++) {

@@ -189,17 +189,6 @@ int OperateDB::handleSearchUsr(const char *name)            //-1找不到，0表
 
 }
 
-/***********************************
-
-
-好友还未添加进数据库 todo
-
-
-
-***********************************/
-
-
-
 int OperateDB::handleAddFriend(const char *des_name, const char *login_name)        //-1失败,0表示已经是好友,1表示在线，2表示不在线,3表示找不到des_name
 {
     if(!des_name || !login_name || !*des_name || !*login_name){

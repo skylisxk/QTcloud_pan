@@ -102,7 +102,7 @@ private:
     //下载
     QThread* m_downloadThread;
     DownloadWorker* m_downloadWorker;
-    qint64 m_downloadTotal;      // 文件总大小（从服务器响应获得）
+    qint64 m_downloadTotal;      // 文件总大小
     void cancelDownload();
     QString getUniqueName(const QString& file_path);        //重复命名
 

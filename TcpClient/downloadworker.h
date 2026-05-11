@@ -17,8 +17,8 @@ public:
 public slots:
 
     void setFile(const QString& filePath);
-    void setTotal(qint64 totalBytes);       // 新增
-    void start();                           // 无参数，依赖之前设置的total
+    void setTotal(qint64 totalBytes);
+    void start();
     void cancel();
     void writeData(const QByteArray& data);     //主线程调用
 

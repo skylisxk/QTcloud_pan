@@ -13,107 +13,180 @@
   <property name="windowTitle">
    <string>TcpClient</string>
   </property>
+  <property name="styleSheet">
+   <string notr="true">background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+    stop:0 #f5f7fa, stop:1 #e4e8f0);</string>
+  </property>
   <widget class="QWidget" name="centralwidget">
-   <widget class="QWidget" name="layoutWidget">
+   <widget class="QWidget" name="">
     <property name="geometry">
      <rect>
-      <x>240</x>
-      <y>140</y>
-      <width>281</width>
-      <height>201</height>
+      <x>250</x>
+      <y>2</y>
+      <width>286</width>
+      <height>551</height>
      </rect>
     </property>
-    <layout class="QGridLayout" name="gridLayout_3">
-     <item row="0" column="0">
-      <layout class="QGridLayout" name="gridLayout_2">
-       <item row="7" column="0" colspan="2">
+    <layout class="QVBoxLayout" name="verticalLayout_2">
+     <item>
+      <spacer name="verticalSpacer">
+       <property name="orientation">
+        <enum>Qt::Orientation::Vertical</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>20</width>
+         <height>198</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <layout class="QVBoxLayout" name="verticalLayout">
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout_2">
+         <item>
+          <widget class="QLabel" name="id">
+           <property name="font">
+            <font>
+             <pointsize>12</pointsize>
+            </font>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+    stop:0 #ffffff, stop:1 #f0f0f0);</string>
+           </property>
+           <property name="text">
+            <string>账号：</string>
+           </property>
+           <property name="margin">
+            <number>2</number>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLineEdit" name="name_le">
+           <property name="styleSheet">
+            <string notr="true">background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+    stop:0 #ffffff, stop:1 #f0f0f0);</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout">
+         <item>
+          <widget class="QLabel" name="pwd">
+           <property name="font">
+            <font>
+             <pointsize>12</pointsize>
+            </font>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+    stop:0 #ffffff, stop:1 #f0f0f0);</string>
+           </property>
+           <property name="text">
+            <string>密码：</string>
+           </property>
+           <property name="margin">
+            <number>2</number>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLineEdit" name="pwd_le">
+           <property name="styleSheet">
+            <string notr="true">background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+    stop:0 #ffffff, stop:1 #f0f0f0);</string>
+           </property>
+           <property name="echoMode">
+            <enum>QLineEdit::EchoMode::Password</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
         <widget class="QPushButton" name="login">
          <property name="font">
           <font>
            <pointsize>18</pointsize>
           </font>
          </property>
+         <property name="styleSheet">
+          <string notr="true">background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+    stop:0 #ffffff, stop:1 #f0f0f0);</string>
+         </property>
          <property name="text">
           <string>登录</string>
          </property>
         </widget>
        </item>
-       <item row="6" column="1">
-        <widget class="QLineEdit" name="pwd_le">
-         <property name="echoMode">
-          <enum>QLineEdit::EchoMode::Password</enum>
-         </property>
-        </widget>
-       </item>
-       <item row="6" column="0">
-        <widget class="QLabel" name="pwd">
-         <property name="font">
-          <font>
-           <pointsize>12</pointsize>
-          </font>
-         </property>
-         <property name="text">
-          <string>密码：</string>
-         </property>
-        </widget>
-       </item>
-       <item row="4" column="1">
-        <widget class="QLineEdit" name="name_le"/>
-       </item>
-       <item row="4" column="0">
-        <widget class="QLabel" name="id">
-         <property name="font">
-          <font>
-           <pointsize>12</pointsize>
-          </font>
-         </property>
-         <property name="text">
-          <string>账号：</string>
-         </property>
-        </widget>
+       <item>
+        <layout class="QGridLayout" name="gridLayout">
+         <item row="0" column="1">
+          <spacer name="horizontalSpacer">
+           <property name="orientation">
+            <enum>Qt::Orientation::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>118</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item row="0" column="0">
+          <widget class="QPushButton" name="regist_pb">
+           <property name="font">
+            <font>
+             <pointsize>12</pointsize>
+            </font>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+    stop:0 #ffffff, stop:1 #f0f0f0);</string>
+           </property>
+           <property name="text">
+            <string>注册</string>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="2">
+          <widget class="QPushButton" name="logout_pb">
+           <property name="font">
+            <font>
+             <pointsize>12</pointsize>
+            </font>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+    stop:0 #ffffff, stop:1 #f0f0f0);</string>
+           </property>
+           <property name="text">
+            <string>注销</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
        </item>
       </layout>
      </item>
-     <item row="1" column="0">
-      <layout class="QGridLayout" name="gridLayout">
-       <item row="0" column="1">
-        <spacer name="horizontalSpacer">
-         <property name="orientation">
-          <enum>Qt::Orientation::Horizontal</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>118</width>
-           <height>20</height>
-          </size>
-         </property>
-        </spacer>
-       </item>
-       <item row="0" column="0">
-        <widget class="QPushButton" name="regist_pb">
-         <property name="font">
-          <font>
-           <pointsize>12</pointsize>
-          </font>
-         </property>
-         <property name="text">
-          <string>注册</string>
-         </property>
-        </widget>
-       </item>
-       <item row="0" column="2">
-        <widget class="QPushButton" name="logout_pb">
-         <property name="font">
-          <font>
-           <pointsize>12</pointsize>
-          </font>
-         </property>
-         <property name="text">
-          <string>注销</string>
-         </property>
-        </widget>
-       </item>
-      </layout>
+     <item>
+      <spacer name="verticalSpacer_2">
+       <property name="orientation">
+        <enum>Qt::Orientation::Vertical</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>20</width>
+         <height>178</height>
+        </size>
+       </property>
+      </spacer>
      </item>
     </layout>
    </widget>

@@ -31,7 +31,6 @@ void Online::showUsr(PDU *pdu)
     for(unsigned int i = 0; i < uiSize; i++){
 
         memcpy(tp, (char*)(pdu->caMsg) + i * 32, 32);
-
         ui->onlineList->addItem(tp);                                //onlinelist就是这个框的objectname
     }
 

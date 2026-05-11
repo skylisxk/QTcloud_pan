@@ -135,7 +135,7 @@ void TcpClient::receiveMsg()
         tcpSocket.read(&c, 1);
         return;
     }
-    if (tcpSocket.bytesAvailable() < uiPDUlen) return;
+    if (tcpSocket.bytesAvailable() < uiPDUlen)  return;
 
     unsigned int uiMsgLen = uiPDUlen - sizeof(PDU);
     PDU* pdu = makePDU(uiMsgLen);
@@ -149,7 +149,6 @@ void TcpClient::receiveMsg()
 
 
 void TcpClient::handlePdu(PDU* pdu){
-
 
     switch(pdu->uiMsgType){
 

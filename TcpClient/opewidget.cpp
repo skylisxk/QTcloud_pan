@@ -2,6 +2,44 @@
 
 OpeWidget::OpeWidget(QWidget *parent)
 {
+    // ========== 设置整体样式 ==========
+    this->setStyleSheet(
+        // 主窗口背景
+        "QWidget { background-color: #f5f7fa; }"
+
+        // 列表样式
+        "QListWidget {"
+        "   background-color: #ffffff;"
+        "   border: 1px solid #dcdfe6;"
+        "   border-radius: 4px;"
+        "   outline: none;"
+        "}"
+
+        "QListWidget::item {"
+        "   padding: 10px;"
+        "   color: #606266;"
+        "}"
+
+        "QListWidget::item:selected {"
+        "   background-color: #409eff;"
+        "   color: #ffffff;"
+        "}"
+
+        "QListWidget::item:hover:!selected {"
+        "   background-color: #ecf5ff;"
+        "}"
+
+        // 堆叠容器背景
+        "QStackedWidget {"
+        "   background-color: #ffffff;"
+        "   border: 1px solid #dcdfe6;"
+        "   border-radius: 4px;"
+        "}"
+        );
+
+    // 设置窗口大小
+    this->setMinimumSize(900, 400);
+
     listWidget = new QListWidget(this);
     listWidget->addItem("好友");
     listWidget->addItem("图书");
@@ -9,18 +47,22 @@ OpeWidget::OpeWidget(QWidget *parent)
     pFriend = new Friend(this);
     pBook = new Book(this);
 
-    //设置显示的窗口
+    //创建一个堆叠容器，可以管理多个页面
     pSW = new QStackedWidget;
+    //设置显示的窗口
     pSW->addWidget(pFriend);
     pSW->addWidget(pBook);
 
+    //创建一个水平布局
     QHBoxLayout* pMain= new QHBoxLayout;
-    pMain->addWidget(listWidget);
-    pMain->addWidget(pSW);
+    pMain->addWidget(listWidget);       // 左边：列表控件
+    pMain->addWidget(pSW);              // 右边：堆叠容器
 
+    // 将布局应用到当前窗口
     setLayout(pMain);
 
     //添加信号,设置窗口
+    // 当 listWidget 当前选中的行改变时，自动切换 pSW显示的页面索引
     connect(listWidget, SIGNAL(currentRowChanged(int)), pSW, SLOT(setCurrentIndex(int)));
 
     // 创建统一定时器
@@ -44,7 +86,7 @@ OpeWidget::~OpeWidget()
     delete pBook;
     delete listWidget;
     delete refreshTimer;
-    // 注意：不要 delete pSW，因为它可能是其他对象的父对象？确保安全
+    // 不delete pSW，可能是其他对象的父对象
     pFriend = nullptr;
     pBook = nullptr;
 

@@ -9,6 +9,8 @@ Friend::Friend(QWidget *parent)
 {
     textEdit = new QTextEdit;
     lineEdit = new QLineEdit;
+    lineEdit->setFixedHeight(30);  // 设置固定宽度
+
     listWidget = new QListWidget;
 
     delFriendButton = new QPushButton("删除好友");
@@ -28,29 +30,55 @@ Friend::Friend(QWidget *parent)
 
     //水平布局
     QHBoxLayout* topHBL = new QHBoxLayout;
-    topHBL->addWidget(textEdit);
-    topHBL->addWidget(listWidget);
-    topHBL->addLayout(rightPBL);
+    // 拉伸
+    topHBL->addWidget(textEdit, 1);
+    // 固定宽度
+    topHBL->addWidget(listWidget, 0);
+    topHBL->addLayout(rightPBL, 0);
 
     //添加消息输入框一栏
     QHBoxLayout* msgHBL = new QHBoxLayout;
     msgHBL->addWidget(lineEdit);
     msgHBL->addWidget(msgSendButton);
 
+    pOnline = new Online;
+    //online.ui大小
+    pOnline->setMinimumSize(600, 250);
+
+    pFriendStackWidget = new QStackedWidget;
+    // 空白占位，索引0
+    pFriendStackWidget->addWidget(new QWidget);
+    // 索引1
+    pFriendStackWidget->addWidget(pOnline);
+    // 切换到索引0
+    pFriendStackWidget->setCurrentIndex(0);
+    //初始隐藏
+    pFriendStackWidget->setMaximumHeight(0);
+
     QVBoxLayout* mainWidget = new QVBoxLayout;
     mainWidget->addLayout(topHBL);
     mainWidget->addLayout(msgHBL);
-
-    pOnline = new Online;
-    mainWidget->addWidget(pOnline);
-    pOnline->hide();
+    mainWidget->addWidget(pFriendStackWidget);
 
     setLayout(mainWidget);
 
-    //online.ui大小
-    pOnline->setFixedSize(800, 400);
-    //点击在线用户，会显示online.ui
-    connect(showOnlineUsrButton, &QAbstractButton::clicked, this, &Friend::showOnline);     //这个button关联到showOnline这个函数
+    //点击在线用户时，展开显示
+    connect(showOnlineUsrButton, &QAbstractButton::clicked, [=](){
+
+        if(pFriendStackWidget->currentIndex() == 0){
+
+            // 切换页面
+            pFriendStackWidget->setCurrentIndex(1);
+            // 展开
+            pFriendStackWidget->setMaximumHeight(300);
+        }
+        else{
+
+            pFriendStackWidget->setCurrentIndex(0);
+            pFriendStackWidget->setMaximumHeight(0);
+        }
+    });
+
     connect(searchUsrButton, &QAbstractButton::clicked, this, &Friend::searchUsr);
     connect(flushFriendButton, &QAbstractButton::clicked, this, &Friend::flushFriend);
     connect(delFriendButton, &QAbstractButton::clicked, this, &Friend::deleteFriend);

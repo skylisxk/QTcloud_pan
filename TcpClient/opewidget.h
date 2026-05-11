@@ -33,6 +33,7 @@ private:
     Friend* pFriend;
     Book* pBook;
 
+    // 页面容器
     QStackedWidget* pSW;
 
     QTimer* refreshTimer;

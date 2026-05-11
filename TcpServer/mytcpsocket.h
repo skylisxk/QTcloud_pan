@@ -52,7 +52,9 @@ private:
 
     QString loginName;
 
-    void addHelper(PDU* &pdu, const char* str, const int type);                //减少代码冗余
+    //减少代码冗余
+    void handlePDU(PDU* pdu);
+    void addHelper(PDU* &pdu, const char* str, const int type);
 
     void flushFileHelper(QDir &dir, QFileInfoList &file_list, PDU* &res_pdu, const int type);
 
