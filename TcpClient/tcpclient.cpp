@@ -80,7 +80,7 @@ void TcpClient::loadConfig()
     }
 
     QByteArray baData = file.readAll();
-    QString strData = baData.toStdString().c_str();
+    QString strData = QString::fromUtf8(baData);
 
     file.close();
 
@@ -232,16 +232,15 @@ void TcpClient::handlePdu(PDU* pdu){
 
     case ENUM_MSG_TYPE_ADD_FRIEND_REQUEST:{                               //添加好友请求
 
-        char login_name[32] = {'\0'};
+        QString login_name = QString::fromUtf8(pdu->caData+32, 32).trimmed();
+        QString des_name   = QString::fromUtf8(pdu->caData, 32).trimmed();
         PDU* res_pdu = makePDU();
-
-        qstrncpy(login_name, pdu->caData+32, 32);
 
         int check = QMessageBox::information(this, "添加好友", QString("%1想要添加您的好友").arg(login_name),
                                              QMessageBox::Yes, QMessageBox::No);
 
-        memcpy(res_pdu->caData+32, login_name, 32);
-        memcpy(res_pdu->caData, pdu->caData, 32);                          //将des_name传入到respdu
+        qstrncpy(res_pdu->caData+32, login_name.toUtf8().constData(), 32);
+        qstrncpy(res_pdu->caData, des_name.toUtf8().constData(), 32);
 
         (check == QMessageBox::Yes) ? res_pdu->uiMsgType = ENUM_MSG_TYPE_ADD_FRIEND_AGREE :
             res_pdu->uiMsgType = ENUM_MSG_TYPE_ADD_FRIEND_REFUSE;
@@ -263,8 +262,7 @@ void TcpClient::handlePdu(PDU* pdu){
     case ENUM_MSG_TYPE_DELETE_FRIEND_REQUEST:{                           //删除好友请求
 
         //显示删除方名字
-        char login_name[32] = {'\0'};
-        memcpy(login_name, pdu->caData, 32);
+        QString login_name = QString::fromUtf8(pdu->caData, 32).trimmed();
         QMessageBox::information(this, "删除好友", QString("%1已将你删除").arg(login_name));
 
         break;
@@ -290,10 +288,9 @@ void TcpClient::handlePdu(PDU* pdu){
 
             PrivateChat::getInstance().show();
         }
-        char login_name[32] = {'\0'};
-        memcpy(login_name, pdu->caData, 32);
+        QString login_name = QString::fromUtf8(pdu->caData, 32).trimmed();
 
-        PrivateChat::getInstance().setChatName((QString)login_name);
+        PrivateChat::getInstance().setChatName(login_name);
         PrivateChat::getInstance().updateMsg(pdu);
         break;
     }
@@ -457,15 +454,10 @@ void TcpClient::on_regist_pb_clicked()
     pdu->uiMsgType = ENUM_MSG_TYPE_REGIST_REQUEST;
 
     //cadata放置账户和密码
-    // strncpy(pdu->caData, name.toStdString().c_str(), 32);
-    // strncpy(pdu->caData+32, pwd.toStdString().c_str(), 32);
-    std::copy_n(name.toStdString().c_str(),
-                qMin(name.length(), 32),
-                pdu->caData);
-
-    std::copy_n(pwd.toStdString().c_str(),
-                qMin(pwd.length(), 32),
-                pdu->caData + 32);
+    QByteArray utf8Name = name.toUtf8();
+    QByteArray utf8Pwd  = pwd.toUtf8();
+    qstrncpy(pdu->caData, utf8Name.constData(), 32);
+    qstrncpy(pdu->caData+32, utf8Pwd.constData(), 32);
 
     tcpSocket.write((char*)pdu, pdu->uiPDUlen);
     free(pdu);
@@ -489,14 +481,10 @@ void TcpClient::on_login_clicked()
     pdu->uiMsgType = ENUM_MSG_TYPE_LOGIN_REQUEST;
 
     //cadata放置账户和密码
-
-    std::copy_n(name.toStdString().c_str(),
-                qMin(name.length(), 32),
-                pdu->caData);
-
-    std::copy_n(pwd.toStdString().c_str(),
-                qMin(pwd.length(), 32),
-                pdu->caData + 32);
+    QByteArray utf8Name = name.toUtf8();
+    QByteArray utf8Pwd  = pwd.toUtf8();
+    qstrncpy(pdu->caData, utf8Name.constData(), 32);
+    qstrncpy(pdu->caData+32, utf8Pwd.constData(), 32);
 
     tcpSocket.write((char*)pdu, pdu->uiPDUlen);
     free(pdu);

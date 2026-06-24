@@ -275,7 +275,7 @@ void Book::createDir()
     pdu->uiMsgType = ENUM_MSG_TYPE_CREATE_DIR_REQUEST;
     qstrncpy(pdu->caData, login_name.toUtf8().constData(), 32);
     qstrncpy(pdu->caData+32, dir_name.toUtf8().constData(), 32);
-    memcpy(pdu->caMsg, path.toStdString().c_str(), path.size());
+    qstrncpy((char*)pdu->caMsg, path.toUtf8().constData(), pdu->uiMsglen);
 
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
 

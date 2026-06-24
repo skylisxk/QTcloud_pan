@@ -22,7 +22,6 @@ void Online::showUsr(PDU *pdu)
     }
 
     //提取pdu数据,包含所有在线的用户
-    char tp[32];
     unsigned int uiSize = pdu->uiMsglen / 32;
 
     //清屏操作
@@ -30,8 +29,8 @@ void Online::showUsr(PDU *pdu)
 
     for(unsigned int i = 0; i < uiSize; i++){
 
-        memcpy(tp, (char*)(pdu->caMsg) + i * 32, 32);
-        ui->onlineList->addItem(tp);                                //onlinelist就是这个框的objectname
+        QString userName = QString::fromUtf8((char*)(pdu->caMsg) + i * 32, 32).trimmed();
+        ui->onlineList->addItem(userName);                                //onlinelist就是这个框的objectname
     }
 
 }
@@ -53,8 +52,8 @@ void Online::on_addFriend_clicked()
     pdu->uiMsgType = ENUM_MSG_TYPE_ADD_FRIEND_REQUEST;
 
     //前32放要查找的名字
-    memcpy(pdu->caData, desName.toStdString().c_str(), qMin(desName.size(),32));
-    memcpy(pdu->caData+32, loginName.toStdString().c_str(), qMin(loginName.size(), 32));
+    qstrncpy(pdu->caData, desName.toUtf8().constData(), 32);
+    qstrncpy(pdu->caData+32, loginName.toUtf8().constData(), 32);
 
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
 

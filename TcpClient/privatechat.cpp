@@ -34,8 +34,7 @@ void PrivateChat::updateMsg(const PDU *pdu)
         return;
     }
 
-    char login_name[32] = {'\0'};
-    memcpy(login_name, pdu->caData, 32);
+    QString login_name = QString::fromUtf8(pdu->caData, 32).trimmed();
     QString strMsg = QString("%1: %2").arg(login_name).arg((char*)pdu->caMsg);
     ui->showMsg->append(strMsg);
 
@@ -51,15 +50,16 @@ void PrivateChat::on_sendMsg_clicked()
         return;
     }
 
-    PDU* pdu = makePDU(input.size()+1);
+    QByteArray utf8Input = input.toUtf8();
+    PDU* pdu = makePDU(utf8Input.size()+1);
     pdu->uiMsgType = ENUM_MSG_TYPE_PRIVATE_CHAT_REQUEST;
 
     //把双方的名字拷贝进去
-    memcpy(pdu->caData, login_name.toStdString().c_str(), login_name.size());
-    memcpy(pdu->caData+32, des_name.toStdString().c_str(), des_name.size());
+    qstrncpy(pdu->caData, login_name.toUtf8().constData(), 32);
+    qstrncpy(pdu->caData+32, des_name.toUtf8().constData(), 32);
 
     //把聊天信息拷贝
-    qstrcpy((char*)pdu->caMsg, input.toStdString().c_str());
+    qstrncpy((char*)pdu->caMsg, utf8Input.constData(), utf8Input.size()+1);
 
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
 

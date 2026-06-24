@@ -121,9 +121,8 @@ void Friend::updateFriendList(PDU *pdu)                     //客户端接收并
 
             for(int i = 0; i < uiSize; i++){
 
-                char login_name[33] = {'\0'};  // 32字节 + 结尾
-                memcpy(login_name, rawData.data() + i * 32, 32);
-                friend_list.append(QString::fromUtf8(login_name));
+                QString login_name = QString::fromUtf8(rawData.data() + i * 32, 32).trimmed();
+                friend_list.append(login_name);
 
             }
 
@@ -145,13 +144,11 @@ void Friend::updateFriendList(PDU *pdu)                     //客户端接收并
     else{
 
         //获取好友名称
-        char login_name[33] = {'\0'};
-
         listWidget->clear();
 
         for(int i = 0; i < uiSize; i++){
 
-            memcpy(login_name, (char*)(pdu->caMsg) + 32 * i, 32);
+            QString login_name = QString::fromUtf8((char*)(pdu->caMsg) + 32 * i, 32).trimmed();
 
             //把结果输出到窗口
             listWidget->addItem(login_name);
@@ -203,7 +200,7 @@ void Friend::searchUsr()
     PDU* pdu = makePDU();
 
     pdu->uiMsgType = ENUM_MSG_TYPE_SEARCH_USR_REQUEST;
-    memcpy(pdu->caData, searchName.toStdString().c_str(), searchName.size());
+    qstrncpy(pdu->caData, searchName.toUtf8().constData(), 32);
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
     free(pdu);
     pdu = nullptr;
@@ -215,7 +212,7 @@ void Friend::flushFriend()
     QString name = TcpClient::getInstance().loginName;
     PDU* pdu = makePDU();
     pdu->uiMsgType = ENUM_MSG_TYPE_FLUSH_FRIEND_REQUEST;
-    memcpy(pdu->caData, name.toStdString().c_str(), name.size());
+    qstrncpy(pdu->caData, name.toUtf8().constData(), 32);
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
     delete pdu;
 }
@@ -235,8 +232,8 @@ void Friend::deleteFriend()
 
     pdu->uiMsgType = ENUM_MSG_TYPE_DELETE_FRIEND_REQUEST;
 
-    memcpy(pdu->caData, login_name.toStdString().c_str(), login_name.size());
-    memcpy(pdu->caData+32, des_name.toStdString().c_str(), des_name.size());
+    qstrncpy(pdu->caData, login_name.toUtf8().constData(), 32);
+    qstrncpy(pdu->caData+32, des_name.toUtf8().constData(), 32);
 
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
 
@@ -273,7 +270,8 @@ void Friend::groupChat()
     pdu->uiMsgType = ENUM_MSG_TYPE_GROUP_CHAT_REQUEST;
 
     qstrncpy(pdu->caData, login_name.toUtf8().constData(), 64);         //拷贝名字
-    memcpy((char*)pdu->caMsg, strMsg.toUtf8().constData(), strMsg.toUtf8().size());             //拷贝内容
+    QByteArray utf8Msg = strMsg.toUtf8();
+    memcpy((char*)pdu->caMsg, utf8Msg.constData(), utf8Msg.size());             //拷贝内容
     ((char*)pdu->caMsg)[strMsg.toUtf8().size()] = '\0';        // 手动加结尾
     //发送到服务器
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
