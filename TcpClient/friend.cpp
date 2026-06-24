@@ -8,12 +8,46 @@ Friend::Friend(QWidget *parent)
     : QWidget{parent}
 {
     textEdit = new QTextEdit;
+    textEdit->setReadOnly(true);
+    textEdit->setPlaceholderText("群聊消息将显示在这里...");
+    textEdit->setStyleSheet(
+        "QTextEdit {"
+        "   background-color: #fafafa;"
+        "   border: 1px solid #e4e7ed;"
+        "   border-radius: 6px;"
+        "   padding: 10px;"
+        "   font-size: 13px;"
+        "}"
+    );
+
     lineEdit = new QLineEdit;
-    lineEdit->setFixedHeight(30);  // 设置固定宽度
+    lineEdit->setFixedHeight(36);
+    lineEdit->setPlaceholderText("输入群聊消息，按回车发送...");
+    lineEdit->setStyleSheet(
+        "QLineEdit {"
+        "   border: 1px solid #e4e7ed;"
+        "   border-radius: 18px;"
+        "   padding: 4px 16px;"
+        "   background-color: #ffffff;"
+        "}"
+        "QLineEdit:focus {"
+        "   border-color: #409eff;"
+        "}"
+    );
 
     listWidget = new QListWidget;
+    listWidget->setMaximumWidth(200);
+    listWidget->setMinimumWidth(160);
+    listWidget->setStyleSheet(
+        "QListWidget {"
+        "   border: 1px solid #e4e7ed;"
+        "   border-radius: 6px;"
+        "}"
+    );
 
     delFriendButton = new QPushButton("删除好友");
+    delFriendButton->setObjectName("delFriendButton");
+
     flushFriendButton = new QPushButton("刷新列表");
     showOnlineUsrButton = new QPushButton("在线用户");
     searchUsrButton = new QPushButton("搜索用户");
@@ -22,23 +56,24 @@ Friend::Friend(QWidget *parent)
 
     //创建垂直布局
     QVBoxLayout* rightPBL = new QVBoxLayout;
+    rightPBL->setSpacing(8);
     rightPBL->addWidget(delFriendButton);
     rightPBL->addWidget(flushFriendButton);
     rightPBL->addWidget(searchUsrButton);
     rightPBL->addWidget(privateChatButton);
     rightPBL->addWidget(showOnlineUsrButton);
+    rightPBL->addStretch();
 
     //水平布局
     QHBoxLayout* topHBL = new QHBoxLayout;
-    // 拉伸
+    topHBL->setSpacing(10);
     topHBL->addWidget(textEdit, 1);
-    // 固定宽度
     topHBL->addWidget(listWidget, 0);
     topHBL->addLayout(rightPBL, 0);
 
     //添加消息输入框一栏
     QHBoxLayout* msgHBL = new QHBoxLayout;
-    msgHBL->addWidget(lineEdit);
+    msgHBL->addWidget(lineEdit, 1);
     msgHBL->addWidget(msgSendButton);
 
     pOnline = new Online;
@@ -56,6 +91,8 @@ Friend::Friend(QWidget *parent)
     pFriendStackWidget->setMaximumHeight(0);
 
     QVBoxLayout* mainWidget = new QVBoxLayout;
+    mainWidget->setSpacing(8);
+    mainWidget->setContentsMargins(12, 12, 12, 12);
     mainWidget->addLayout(topHBL);
     mainWidget->addLayout(msgHBL);
     mainWidget->addWidget(pFriendStackWidget);

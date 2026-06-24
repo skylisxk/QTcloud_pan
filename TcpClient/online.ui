@@ -6,51 +6,87 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>794</width>
-    <height>438</height>
+    <width>520</width>
+    <height>320</height>
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Form</string>
+   <string>在线用户</string>
   </property>
   <property name="styleSheet">
-   <string notr="true">background-color: #fdfbf7;</string>
+   <string notr="true">#Online { background-color: #ffffff; }</string>
   </property>
-  <widget class="QPushButton" name="addFriend">
-   <property name="geometry">
-    <rect>
-     <x>490</x>
-     <y>70</y>
-     <width>104</width>
-     <height>39</height>
-    </rect>
+  <layout class="QVBoxLayout" name="mainLayout">
+   <property name="leftMargin">
+    <number>12</number>
    </property>
-   <property name="font">
-    <font>
-     <pointsize>18</pointsize>
-    </font>
+   <property name="topMargin">
+    <number>12</number>
    </property>
-   <property name="styleSheet">
-    <string notr="true">background-color: #fdfbf7;</string>
+   <property name="rightMargin">
+    <number>12</number>
    </property>
-   <property name="text">
-    <string>添加好友</string>
+   <property name="bottomMargin">
+    <number>12</number>
    </property>
-  </widget>
-  <widget class="QListWidget" name="onlineList">
-   <property name="geometry">
-    <rect>
-     <x>1</x>
-     <y>1</y>
-     <width>481</width>
-     <height>192</height>
-    </rect>
-   </property>
-   <property name="styleSheet">
-    <string notr="true">background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-    stop:0 #ffffff, stop:1 #f0f0f0);</string>
-   </property>
-  </widget>
+   <item>
+    <widget class="QLabel" name="titleLabel">
+     <property name="text">
+      <string>在线用户列表</string>
+     </property>
+     <property name="styleSheet">
+      <string notr="true">font-size: 16px; font-weight: bold; color: #303133; padding: 4px 0px; background: transparent;</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="contentLayout">
+     <property name="spacing">
+      <number>12</number>
+     </property>
+     <item>
+      <widget class="QListWidget" name="onlineList">
+       <property name="styleSheet">
+        <string notr="true">QListWidget {
+    border: 1px solid #e4e7ed;
+    border-radius: 6px;
+}</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <layout class="QVBoxLayout" name="buttonLayout">
+       <item>
+        <widget class="QPushButton" name="addFriend">
+         <property name="text">
+          <string>添加好友</string>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>100</width>
+           <height>38</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="vSpacer">
+         <property name="orientation">
+          <enum>Qt::Orientation::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </item>
+  </layout>
  </widget>
  <resources/>
  <connections/>

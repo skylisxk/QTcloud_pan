@@ -7,29 +7,42 @@ ProgressDialog::ProgressDialog(QWidget *parent)
 {
 
     setWindowTitle("传输进度");
-    setModal(true);  // 模态对话框，阻止用户操作其他窗口
-    setFixedSize(400, 180);
+    setModal(true);
+    setFixedSize(420, 200);
+    setStyleSheet(
+        "QDialog {"
+        "   background-color: #ffffff;"
+        "   border-radius: 8px;"
+        "}"
+    );
 
     // 创建控件
     m_titleLabel = new QLabel("正在传输...");
-    m_titleLabel->setStyleSheet("font-size: 14px; font-weight: bold;");
+    m_titleLabel->setStyleSheet("font-size: 15px; font-weight: bold; color: #303133;");
 
     m_fileLabel = new QLabel("文件名: ");
     m_fileLabel->setWordWrap(true);
+    m_fileLabel->setStyleSheet("color: #909399; font-size: 12px;");
 
     m_progressBar = new QProgressBar;
     m_progressBar->setRange(0, 100);
     m_progressBar->setValue(0);
+    m_progressBar->setFixedHeight(22);
 
     m_percentLabel = new QLabel("0%");
     m_percentLabel->setAlignment(Qt::AlignCenter);
+    m_percentLabel->setStyleSheet("font-size: 14px; font-weight: bold; color: #409eff;");
 
     m_detailLabel = new QLabel("已传输: 0 / 0 字节");
+    m_detailLabel->setStyleSheet("color: #909399; font-size: 12px;");
 
-    m_cancelBtn = new QPushButton("取消");
+    m_cancelBtn = new QPushButton("取消传输");
+    m_cancelBtn->setFixedWidth(100);
 
     // 布局
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
+    mainLayout->setSpacing(10);
+    mainLayout->setContentsMargins(24, 20, 24, 16);
     mainLayout->addWidget(m_titleLabel);
     mainLayout->addWidget(m_fileLabel);
 
@@ -87,8 +100,10 @@ void ProgressDialog::setFinished()
 {
     m_isFinished = true;
     m_titleLabel->setText("传输完成！");
+    m_titleLabel->setStyleSheet("font-size: 15px; font-weight: bold; color: #67c23a;");
     m_progressBar->setValue(100);
     m_percentLabel->setText("100%");
+    m_percentLabel->setStyleSheet("font-size: 14px; font-weight: bold; color: #67c23a;");
     m_cancelBtn->setText("关闭");
 
 }

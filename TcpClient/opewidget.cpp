@@ -3,60 +3,61 @@
 OpeWidget::OpeWidget(QWidget *parent)
 {
     // ========== 设置整体样式 ==========
-    this->setStyleSheet(
-        // 主窗口背景
-        "QWidget { background-color: #f5f7fa; }"
+    this->setMinimumSize(960, 520);
+    this->setStyleSheet("QWidget { background-color: #f0f2f5; }");
 
-        // 列表样式
+    // 侧边栏
+    listWidget = new QListWidget(this);
+    listWidget->setFixedWidth(150);
+    listWidget->setStyleSheet(
         "QListWidget {"
         "   background-color: #ffffff;"
-        "   border: 1px solid #dcdfe6;"
-        "   border-radius: 4px;"
-        "   outline: none;"
+        "   border: none;"
+        "   border-right: 1px solid #e4e7ed;"
+        "   font-size: 14px;"
+        "   padding: 8px 0px;"
         "}"
-
         "QListWidget::item {"
-        "   padding: 10px;"
+        "   padding: 14px 20px;"
         "   color: #606266;"
+        "   border-left: 3px solid transparent;"
         "}"
-
         "QListWidget::item:selected {"
-        "   background-color: #409eff;"
-        "   color: #ffffff;"
-        "}"
-
-        "QListWidget::item:hover:!selected {"
         "   background-color: #ecf5ff;"
+        "   color: #409eff;"
+        "   border-left: 3px solid #409eff;"
+        "   font-weight: bold;"
         "}"
-
-        // 堆叠容器背景
-        "QStackedWidget {"
-        "   background-color: #ffffff;"
-        "   border: 1px solid #dcdfe6;"
-        "   border-radius: 4px;"
+        "QListWidget::item:hover:!selected {"
+        "   background-color: #f5f7fa;"
+        "   color: #409eff;"
         "}"
-        );
-
-    // 设置窗口大小
-    this->setMinimumSize(900, 400);
-
-    listWidget = new QListWidget(this);
-    listWidget->addItem("好友");
-    listWidget->addItem("图书");
+    );
+    listWidget->addItem("👥  好友");
+    listWidget->addItem("📁  图书");
 
     pFriend = new Friend(this);
     pBook = new Book(this);
 
     //创建一个堆叠容器，可以管理多个页面
     pSW = new QStackedWidget;
+    pSW->setStyleSheet(
+        "QStackedWidget {"
+        "   background-color: #ffffff;"
+        "   border-radius: 8px;"
+        "   margin: 8px;"
+        "}"
+    );
     //设置显示的窗口
     pSW->addWidget(pFriend);
     pSW->addWidget(pBook);
 
     //创建一个水平布局
     QHBoxLayout* pMain= new QHBoxLayout;
+    pMain->setSpacing(0);
+    pMain->setContentsMargins(0, 0, 0, 0);
     pMain->addWidget(listWidget);       // 左边：列表控件
-    pMain->addWidget(pSW);              // 右边：堆叠容器
+    pMain->addWidget(pSW, 1);           // 右边：堆叠容器
 
     // 将布局应用到当前窗口
     setLayout(pMain);

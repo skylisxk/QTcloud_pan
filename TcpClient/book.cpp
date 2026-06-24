@@ -13,32 +13,53 @@ Book::Book(QWidget *parent)
     : QWidget{parent}
 {
     bookList = new QListWidget;
+    bookList->setStyleSheet(
+        "QListWidget {"
+        "   border: 1px solid #e4e7ed;"
+        "   border-radius: 6px;"
+        "   font-size: 13px;"
+        "}"
+    );
 
-    backPB = new QPushButton("返回");
+    backPB = new QPushButton("← 返回");
     createPB = new QPushButton("创建文件夹");
     removeDirFilePB = new QPushButton("删除文件");
+    removeDirFilePB->setObjectName("removeDirFilePB");
     sharePB = new QPushButton("分享文件");
     renamePB = new QPushButton("重命名文件夹");
     flushPB = new QPushButton("刷新文件");
     uploadPB = new QPushButton("上传文件");
+    uploadPB->setObjectName("uploadPB");
     downloadPB = new QPushButton("下载文件");
+    downloadPB->setObjectName("downloadPB");
+
+    // 分隔线
+    QFrame* separator = new QFrame;
+    separator->setFrameShape(QFrame::HLine);
+    separator->setStyleSheet("QFrame { color: #e4e7ed; margin: 4px 0px; }");
 
     QVBoxLayout* dirVBL = new QVBoxLayout;
+    dirVBL->setSpacing(6);
     dirVBL->addWidget(backPB);
     dirVBL->addWidget(createPB);
     dirVBL->addWidget(renamePB);
     dirVBL->addWidget(flushPB);
+    dirVBL->addWidget(separator);
 
     QVBoxLayout* fileVBL = new QVBoxLayout;
+    fileVBL->setSpacing(6);
     fileVBL->addWidget(uploadPB);
     fileVBL->addWidget(downloadPB);
     fileVBL->addWidget(sharePB);
     fileVBL->addWidget(removeDirFilePB);
+    dirVBL->addLayout(fileVBL);
+    dirVBL->addStretch();
 
     QHBoxLayout* mainLayout = new QHBoxLayout;
-    mainLayout->addWidget(bookList);
-    mainLayout->addLayout(dirVBL);
-    mainLayout->addLayout(fileVBL);
+    mainLayout->setSpacing(12);
+    mainLayout->setContentsMargins(12, 12, 12, 12);
+    mainLayout->addWidget(bookList, 1);
+    mainLayout->addLayout(dirVBL, 0);
 
     setLayout(mainLayout);
     file_recve_size = 0;

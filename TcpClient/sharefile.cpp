@@ -1,38 +1,59 @@
 #include "sharefile.h"
 #include <QCheckBox>
+#include <QLabel>
 #include "tcpclient.h"
 #include "opewidget.h"
 
 ShareFile::ShareFile(QWidget *parent)
     : QWidget{parent}
 {
+    setWindowTitle("分享文件");
+    setStyleSheet("QWidget { background-color: #ffffff; }");
+    setMinimumSize(320, 350);
+
+    QLabel* titleLabel = new QLabel("📤 分享文件给好友");
+    titleLabel->setStyleSheet("font-size: 16px; font-weight: bold; color: #303133; padding: 8px 0px; background: transparent;");
 
     selectAllPB = new QPushButton("全选");
-    selectCancelPB = new QPushButton("取消");
-    selectInversePB = new QPushButton("取消全选");
+    selectInversePB = new QPushButton("反选");
     selectConfirmPB = new QPushButton("确定");
+    selectConfirmPB->setObjectName("selectConfirmPB");
+    selectCancelPB = new QPushButton("取消");
 
     friendWidget = new QWidget;
+    friendWidget->setStyleSheet("background: transparent;");
     friendArea = new QScrollArea;
+    friendArea->setWidgetResizable(true);
+    friendArea->setStyleSheet(
+        "QScrollArea {"
+        "   border: 1px solid #e4e7ed;"
+        "   border-radius: 6px;"
+        "   background-color: #fafafa;"
+        "}"
+    );
     friendVBL = new QVBoxLayout(friendWidget);
     friendButtonGroup = new QButtonGroup(friendWidget);
     //多选
     friendButtonGroup->setExclusive(false);
 
     QHBoxLayout *top_hbl = new QHBoxLayout;
+    top_hbl->setSpacing(8);
     top_hbl->addWidget(selectAllPB);
     top_hbl->addWidget(selectInversePB);
-
-    //下拉槽
     top_hbl->addStretch();
 
     QHBoxLayout *down_hbl = new QHBoxLayout;
+    down_hbl->setSpacing(8);
+    down_hbl->addStretch();
     down_hbl->addWidget(selectConfirmPB);
     down_hbl->addWidget(selectCancelPB);
 
     QVBoxLayout *main_vbl = new QVBoxLayout;
+    main_vbl->setSpacing(10);
+    main_vbl->setContentsMargins(16, 16, 16, 16);
+    main_vbl->addWidget(titleLabel);
     main_vbl->addLayout(top_hbl);
-    main_vbl->addWidget(friendArea);
+    main_vbl->addWidget(friendArea, 1);
     main_vbl->addLayout(down_hbl);
     setLayout(main_vbl);
 
