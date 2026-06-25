@@ -1,4 +1,8 @@
 #include "opewidget.h"
+#include "tcpclient.h"
+#include <QLabel>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
 
 OpeWidget::OpeWidget(QWidget *parent)
 {
@@ -6,14 +10,59 @@ OpeWidget::OpeWidget(QWidget *parent)
     this->setMinimumSize(960, 520);
     this->setStyleSheet("QWidget { background-color: #f0f2f5; }");
 
-    // 侧边栏
+    // ========== 侧边栏整体容器 ==========
+    QWidget* sidebarWidget = new QWidget(this);
+    sidebarWidget->setFixedWidth(150);
+    sidebarWidget->setStyleSheet("background-color: #ffffff; border-right: 1px solid #e4e7ed;");
+
+    QVBoxLayout* sidebarLayout = new QVBoxLayout(sidebarWidget);
+    sidebarLayout->setSpacing(0);
+    sidebarLayout->setContentsMargins(0, 0, 0, 0);
+
+    // 用户信息头部区域
+    QString loginUserName = TcpClient::getInstance().loginName;
+    QWidget* userHeader = new QWidget;
+    userHeader->setStyleSheet("background-color: #f5f7fa; border-bottom: 1px solid #e4e7ed;");
+    userHeader->setFixedHeight(64);
+
+    QHBoxLayout* headerLayout = new QHBoxLayout(userHeader);
+    headerLayout->setSpacing(8);
+    headerLayout->setContentsMargins(12, 0, 12, 0);
+
+    // 头像占位圆圈
+    QLabel* avatarLabel = new QLabel;
+    avatarLabel->setFixedSize(36, 36);
+    avatarLabel->setStyleSheet(
+        "background-color: #409eff;"
+        "border-radius: 18px;"
+        "color: #ffffff;"
+        "font-size: 15px;"
+        "font-weight: bold;"
+    );
+    avatarLabel->setAlignment(Qt::AlignCenter);
+    // 取用户名的第一个字符作为头像文字
+    QString avatarText = loginUserName.isEmpty() ? QString("U") : QString(loginUserName.at(0).toUpper());
+    avatarLabel->setText(avatarText);
+
+    // 用户名标签
+    QLabel* userNameLabel = new QLabel(loginUserName.isEmpty() ? "未登录" : loginUserName);
+    userNameLabel->setStyleSheet(
+        "font-size: 13px;"
+        "font-weight: bold;"
+        "color: #303133;"
+        "background: transparent;"
+    );
+    userNameLabel->setWordWrap(false);
+
+    headerLayout->addWidget(avatarLabel);
+    headerLayout->addWidget(userNameLabel, 1);
+
+    // 列表
     listWidget = new QListWidget(this);
-    listWidget->setFixedWidth(150);
     listWidget->setStyleSheet(
         "QListWidget {"
         "   background-color: #ffffff;"
         "   border: none;"
-        "   border-right: 1px solid #e4e7ed;"
         "   font-size: 14px;"
         "   padding: 8px 0px;"
         "}"
@@ -36,6 +85,9 @@ OpeWidget::OpeWidget(QWidget *parent)
     listWidget->addItem("👥  好友");
     listWidget->addItem("📁  图书");
 
+    sidebarLayout->addWidget(userHeader);
+    sidebarLayout->addWidget(listWidget, 1);
+
     pFriend = new Friend(this);
     pBook = new Book(this);
 
@@ -56,11 +108,14 @@ OpeWidget::OpeWidget(QWidget *parent)
     QHBoxLayout* pMain= new QHBoxLayout;
     pMain->setSpacing(0);
     pMain->setContentsMargins(0, 0, 0, 0);
-    pMain->addWidget(listWidget);       // 左边：列表控件
-    pMain->addWidget(pSW, 1);           // 右边：堆叠容器
+    pMain->addWidget(sidebarWidget);        // 左边：侧边栏（含用户信息+菜单）
+    pMain->addWidget(pSW, 1);               // 右边：堆叠容器
 
     // 将布局应用到当前窗口
     setLayout(pMain);
+
+    // 设置窗口标题包含当前用户名
+    setWindowTitle(QString("云盘 - %1").arg(loginUserName));
 
     //添加信号,设置窗口
     // 当 listWidget 当前选中的行改变时，自动切换 pSW显示的页面索引

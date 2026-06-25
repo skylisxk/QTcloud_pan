@@ -232,8 +232,8 @@ void TcpClient::handlePdu(PDU* pdu){
 
     case ENUM_MSG_TYPE_ADD_FRIEND_REQUEST:{                               //添加好友请求
 
-        QString login_name = QString::fromUtf8(pdu->caData+32, 32).trimmed();
-        QString des_name   = QString::fromUtf8(pdu->caData, 32).trimmed();
+        QString login_name = QString::fromUtf8(pdu->caData+32);
+        QString des_name   = QString::fromUtf8(pdu->caData);
         PDU* res_pdu = makePDU();
 
         int check = QMessageBox::information(this, "添加好友", QString("%1想要添加您的好友").arg(login_name),
@@ -262,7 +262,7 @@ void TcpClient::handlePdu(PDU* pdu){
     case ENUM_MSG_TYPE_DELETE_FRIEND_REQUEST:{                           //删除好友请求
 
         //显示删除方名字
-        QString login_name = QString::fromUtf8(pdu->caData, 32).trimmed();
+        QString login_name = QString::fromUtf8(pdu->caData);
         QMessageBox::information(this, "删除好友", QString("%1已将你删除").arg(login_name));
 
         break;
@@ -288,7 +288,7 @@ void TcpClient::handlePdu(PDU* pdu){
 
             PrivateChat::getInstance().show();
         }
-        QString login_name = QString::fromUtf8(pdu->caData, 32).trimmed();
+        QString login_name = QString::fromUtf8(pdu->caData);
 
         PrivateChat::getInstance().setChatName(login_name);
         PrivateChat::getInstance().updateMsg(pdu);

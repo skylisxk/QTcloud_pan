@@ -108,6 +108,12 @@ Friend::Friend(QWidget *parent)
             pFriendStackWidget->setCurrentIndex(1);
             // 展开
             pFriendStackWidget->setMaximumHeight(300);
+
+            // 发送获取在线用户的请求
+            PDU* pdu = makePDU();
+            pdu->uiMsgType = ENUM_MSG_TYPE_ALL_ONLINE_REQUEST;
+            TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
+            free(pdu);
         }
         else{
 
@@ -158,7 +164,7 @@ void Friend::updateFriendList(PDU *pdu)                     //客户端接收并
 
             for(int i = 0; i < uiSize; i++){
 
-                QString login_name = QString::fromUtf8(rawData.data() + i * 32, 32).trimmed();
+                QString login_name = QString::fromUtf8(rawData.data() + i * 32);
                 friend_list.append(login_name);
 
             }
@@ -185,7 +191,7 @@ void Friend::updateFriendList(PDU *pdu)                     //客户端接收并
 
         for(int i = 0; i < uiSize; i++){
 
-            QString login_name = QString::fromUtf8((char*)(pdu->caMsg) + 32 * i, 32).trimmed();
+            QString login_name = QString::fromUtf8((char*)(pdu->caMsg) + 32 * i);
 
             //把结果输出到窗口
             listWidget->addItem(login_name);

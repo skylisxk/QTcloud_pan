@@ -34,7 +34,7 @@ void PrivateChat::updateMsg(const PDU *pdu)
         return;
     }
 
-    QString login_name = QString::fromUtf8(pdu->caData, 32).trimmed();
+    QString login_name = QString::fromUtf8(pdu->caData);
     QString strMsg = QString("%1: %2").arg(login_name).arg((char*)pdu->caMsg);
     ui->showMsg->append(strMsg);
 

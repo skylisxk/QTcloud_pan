@@ -217,8 +217,8 @@ void MyTcpSocket::handlePDU(PDU* pdu){
 
     case ENUM_MSG_TYPE_REGIST_REQUEST:{                                     //如果是注册请求
 
-        QString caName = QString::fromUtf8(pdu->caData, 32).trimmed();
-        QString caPwd  = QString::fromUtf8(pdu->caData+32, 32).trimmed();
+        QString caName = QString::fromUtf8(pdu->caData);
+        QString caPwd  = QString::fromUtf8(pdu->caData+32);
         PDU* resPdu = makePDU();                                    //响应
 
         //跟数据库的对比，如果输入的账户密码处理失败
@@ -247,8 +247,8 @@ void MyTcpSocket::handlePDU(PDU* pdu){
 
     case ENUM_MSG_TYPE_LOGIN_REQUEST:{                                      //登录请求
 
-        QString caName = QString::fromUtf8(pdu->caData, 32).trimmed();
-        QString caPwd  = QString::fromUtf8(pdu->caData+32, 32).trimmed();
+        QString caName = QString::fromUtf8(pdu->caData);
+        QString caPwd  = QString::fromUtf8(pdu->caData+32);
         PDU* resPdu = makePDU();                                    //响应
 
         //如果输入的账户密码处理失败
@@ -345,8 +345,8 @@ void MyTcpSocket::handlePDU(PDU* pdu){
 
     case ENUM_MSG_TYPE_ADD_FRIEND_REQUEST:{                                 //添加好友
 
-        QString login_name = QString::fromUtf8(pdu->caData+32, 32).trimmed();
-        QString des_name   = QString::fromUtf8(pdu->caData, 32).trimmed();
+        QString login_name = QString::fromUtf8(pdu->caData+32);
+        QString des_name   = QString::fromUtf8(pdu->caData);
 
         int state = OperateDB::getInstance().handleAddFriend(des_name.toUtf8().constData(), login_name.toUtf8().constData());
         PDU* res_pdu = makePDU();
@@ -380,8 +380,8 @@ void MyTcpSocket::handlePDU(PDU* pdu){
 
     case ENUM_MSG_TYPE_ADD_FRIEND_AGREE:{                                   //同意请求
 
-        QString login_name = QString::fromUtf8(pdu->caData+32, 32).trimmed();
-        QString des_name   = QString::fromUtf8(pdu->caData, 32).trimmed();
+        QString login_name = QString::fromUtf8(pdu->caData+32);
+        QString des_name   = QString::fromUtf8(pdu->caData);
 
         OperateDB::getInstance().addFriendDB(des_name.toUtf8().constData(), login_name.toUtf8().constData());
 
@@ -398,7 +398,7 @@ void MyTcpSocket::handlePDU(PDU* pdu){
 
     case ENUM_MSG_TYPE_FLUSH_FRIEND_REQUEST:{                               //刷新好友列表
         //获取当前用户名称
-        QString login_name = QString::fromUtf8(pdu->caData, 32).trimmed();
+        QString login_name = QString::fromUtf8(pdu->caData);
         //获取好友列表，调用数据库
         QStringList list = OperateDB::getInstance().handleFlushFriend(login_name.toUtf8().constData());
 
@@ -433,8 +433,8 @@ void MyTcpSocket::handlePDU(PDU* pdu){
 
     case ENUM_MSG_TYPE_DELETE_FRIEND_REQUEST:{                              //删除好友请求
 
-        QString login_name = QString::fromUtf8(pdu->caData, 32).trimmed();
-        QString des_name   = QString::fromUtf8(pdu->caData+32, 32).trimmed();
+        QString login_name = QString::fromUtf8(pdu->caData);
+        QString des_name   = QString::fromUtf8(pdu->caData+32);
 
         OperateDB::getInstance().deleteFriend(des_name.toUtf8().constData(), login_name.toUtf8().constData());
 
@@ -455,7 +455,7 @@ void MyTcpSocket::handlePDU(PDU* pdu){
 
     case ENUM_MSG_TYPE_PRIVATE_CHAT_REQUEST:{                               //私聊请求
 
-        QString des_name = QString::fromUtf8(pdu->caData+32, 32).trimmed();
+        QString des_name = QString::fromUtf8(pdu->caData+32);
 
         MyTcpServer::getInstance().transcation(des_name.toUtf8().constData(), pdu);
 
@@ -486,7 +486,7 @@ void MyTcpSocket::handlePDU(PDU* pdu){
             break;
         }
 
-        QString dir_name = QString::fromUtf8(pdu->caData+32, 32).trimmed();
+        QString dir_name = QString::fromUtf8(pdu->caData+32);
         //在当前目录下创建文件夹
         QString newPath = path + "/" + dir_name;
 
@@ -1240,7 +1240,7 @@ void MyTcpSocket::handleShareFile(PDU *pdu)
     //解析caMsg，获得接受者名字并转发出去
     for(int i = 0; i < recipient_num; i++){
 
-        QString recipient_name = QString::fromUtf8((char*)pdu->caMsg + i*32, 32).trimmed();
+        QString recipient_name = QString::fromUtf8((char*)pdu->caMsg + i*32);
         //转发名称
         MyTcpServer::getInstance().transcation(recipient_name.toUtf8().constData(), inform_pdu);
     }

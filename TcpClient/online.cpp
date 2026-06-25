@@ -29,7 +29,7 @@ void Online::showUsr(PDU *pdu)
 
     for(unsigned int i = 0; i < uiSize; i++){
 
-        QString userName = QString::fromUtf8((char*)(pdu->caMsg) + i * 32, 32).trimmed();
+        QString userName = QString::fromUtf8((char*)(pdu->caMsg) + i * 32);
         ui->onlineList->addItem(userName);                                //onlinelist就是这个框的objectname
     }
 
