@@ -737,6 +737,14 @@ void MyTcpSocket::flushFileHelper(QDir &dir, QFileInfoList &file_list, PDU* &res
         //判断类型
         file_info->fileType = (file_list[i].isFile() ? 1 : 0);
 
+        // 文件大小
+        file_info->fileSize = file_info->fileType ? file_list[i].size() : 0;
+
+        // 修改日期
+        QString dateStr = file_list[i].lastModified().toString("yyyy-MM-dd HH:mm");
+        QByteArray utf8Date = dateStr.toUtf8();
+        qstrncpy(file_info->lastModified, utf8Date.constData(), sizeof(file_info->lastModified));
+
         //把名字拷贝到结构体
         QString file_name;
         //如果是文件

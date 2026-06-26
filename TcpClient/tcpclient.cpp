@@ -132,30 +132,29 @@ void TcpClient::onReadyRead()
 
 void TcpClient::receiveMsg()
 {
+    // 循环读取，直到没有完整的 PDU 可读（解决 TCP 黏包问题）
+    while (tcpSocket.bytesAvailable() >= sizeof(unsigned int)) {
 
-    // 只负责读取一个 PDU，然后调用 handlePdu
-    if (tcpSocket.bytesAvailable() < sizeof(unsigned int)) return;
+        unsigned int uiPDUlen = 0;
 
-    unsigned int uiPDUlen = 0;
+        tcpSocket.peek((char*)&uiPDUlen, sizeof(unsigned int));
+        if (uiPDUlen < sizeof(PDU) || uiPDUlen > 10*1024*1024) {
 
-    tcpSocket.peek((char*)&uiPDUlen, sizeof(unsigned int));
-    if (uiPDUlen < sizeof(PDU) || uiPDUlen > 10*1024*1024) {
+            // 非法，跳过字节
+            char c;
+            tcpSocket.read(&c, 1);
+            continue;
+        }
+        if (tcpSocket.bytesAvailable() < uiPDUlen)  return;
 
-        // 非法，跳过字节
-        char c;
-        tcpSocket.read(&c, 1);
-        return;
+        unsigned int uiMsgLen = uiPDUlen - sizeof(PDU);
+        PDU* pdu = makePDU(uiMsgLen);
+        tcpSocket.read((char*)pdu, uiPDUlen);
+
+        handlePdu(pdu);
+
+        free(pdu);
     }
-    if (tcpSocket.bytesAvailable() < uiPDUlen)  return;
-
-    unsigned int uiMsgLen = uiPDUlen - sizeof(PDU);
-    PDU* pdu = makePDU(uiMsgLen);
-    tcpSocket.read((char*)pdu, uiPDUlen);
-
-    handlePdu(pdu);
-
-    free(pdu);
-
 }
 
 

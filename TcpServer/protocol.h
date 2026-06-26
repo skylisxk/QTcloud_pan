@@ -98,7 +98,9 @@ enum ENUM_MSG_TYPE{
 struct FileInfo{
 
     char fileName[64];          //文件名
-    int fileType;               //文件类型
+    int fileType;               //文件类型 0=目录 1=文件
+    long long fileSize;         //文件大小（字节）
+    char lastModified[32];      //修改日期 "yyyy-MM-dd HH:mm"
 };
 
 struct PDU

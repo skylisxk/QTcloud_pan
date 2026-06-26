@@ -9,12 +9,29 @@
 #include <QCoreApplication>
 #include <QThread>
 
+// ========== 格式化文件大小 ==========
+static QString formatSize(long long size)
+{
+    if (size < 1024) return QString("%1 B").arg(size);
+    if (size < 1024 * 1024) return QString("%1 KB").arg(size / 1024.0, 0, 'f', 1);
+    if (size < 1024 * 1024 * 1024) return QString("%1 MB").arg(size / (1024.0 * 1024.0), 0, 'f', 1);
+    return QString("%1 GB").arg(size / (1024.0 * 1024.0 * 1024.0), 0, 'f', 2);
+}
+
 Book::Book(QWidget *parent)
     : QWidget{parent}
 {
-    bookList = new QListWidget;
+    bookList = new QTreeWidget;
+    bookList->setColumnCount(3);
+    bookList->setHeaderLabels({QString::fromUtf8("名称"), QString::fromUtf8("大小"), QString::fromUtf8("修改日期")});
+    bookList->setRootIsDecorated(false);
+    bookList->setSelectionMode(QAbstractItemView::SingleSelection);
+    bookList->header()->setStretchLastSection(false);
+    bookList->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    bookList->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    bookList->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     bookList->setStyleSheet(
-        "QListWidget {"
+        "QTreeWidget {"
         "   border: 1px solid #e4e7ed;"
         "   border-radius: 6px;"
         "   font-size: 13px;"
@@ -62,11 +79,8 @@ Book::Book(QWidget *parent)
     mainLayout->addLayout(dirVBL, 0);
 
     setLayout(mainLayout);
-    file_recve_size = 0;
-    file_total_size = 0;
     upload_state = uploadIdle;
     download_state = Idle;
-
 
     m_threadPool = nullptr;
     m_progressDialog = nullptr;
@@ -78,7 +92,7 @@ Book::Book(QWidget *parent)
     connect(renamePB, &QAbstractButton::clicked, this, &Book::renameDirFile);
     connect(backPB, &QAbstractButton::clicked, this, &Book::backDir);
     connect(uploadPB, &QAbstractButton::clicked, this, &Book::uploadFile);
-    connect(bookList, &QListWidget::doubleClicked, this, &Book::enterDir);
+    connect(bookList, &QTreeWidget::itemDoubleClicked, this, &Book::enterDir);
     connect(downloadPB, &QAbstractButton::clicked, this, &Book::downloadFile);
     connect(sharePB, &QAbstractButton::clicked, this, &Book::shareFile);
 
@@ -181,9 +195,6 @@ Book::~Book()
         m_progressDialog = nullptr;
     }
 
-    // 关闭文件
-    if (upload_file.isOpen()) upload_file.close();
-
     qDebug() << "Book 析构完成";
 }
 
@@ -218,6 +229,8 @@ void Book::updateFileList(const PDU *pdu)
             struct ItemData{
                 QString fileName;
                 int fileType;
+                long long fileSize;
+                QString lastModified;
             };
 
             QList<ItemData> items;
@@ -231,6 +244,8 @@ void Book::updateFileList(const PDU *pdu)
                 ItemData item_data;
                 item_data.fileName = QString::fromUtf8(file_info->fileName);
                 item_data.fileType = file_info->fileType;
+                item_data.fileSize = file_info->fileSize;
+                item_data.lastModified = QString::fromUtf8(file_info->lastModified);
                 items.append(item_data);
 
             }
@@ -242,15 +257,17 @@ void Book::updateFileList(const PDU *pdu)
 
                 for(const auto& item_data : items){
 
-                    QListWidgetItem* item = new QListWidgetItem;
+                    QTreeWidgetItem* item = new QTreeWidgetItem;
 
                     QString iconPath = (item_data.fileType == 0) ? ":/icon/dir.jpg" : ":/icon/file.jpg";
-                    item->setIcon(QIcon(iconPath));
-                    item->setText(item_data.fileName);
+                    item->setIcon(0, QIcon(iconPath));
+                    item->setText(0, item_data.fileName);
+                    item->setText(1, item_data.fileType == 0 ? QString() : formatSize(item_data.fileSize));
+                    item->setText(2, item_data.lastModified);
                     // 存储文件类型，方便后续操作（如双击时判断是文件还是文件夹）
-                    item->setData(Qt::UserRole, item_data.fileType);
+                    item->setData(0, Qt::UserRole, item_data.fileType);
 
-                    bookList->addItem(item);
+                    bookList->addTopLevelItem(item);
                 }
             }, Qt::QueuedConnection);
 
@@ -265,12 +282,14 @@ void Book::updateFileList(const PDU *pdu)
         for(int i = 0; i < file_count; i++) {
             FileInfo* file_info = (FileInfo*)pdu->caMsg + i;
 
-            QListWidgetItem* item = new QListWidgetItem;
+            QTreeWidgetItem* item = new QTreeWidgetItem;
             QString iconPath = (file_info->fileType == 0) ? ":/icon/dir.jpg" : ":/icon/file.jpg";
-            item->setIcon(QIcon(iconPath));
-            item->setText(QString::fromUtf8(file_info->fileName));
-            item->setData(Qt::UserRole, file_info->fileType);
-            bookList->addItem(item);
+            item->setIcon(0, QIcon(iconPath));
+            item->setText(0, QString::fromUtf8(file_info->fileName));
+            item->setText(1, file_info->fileType == 0 ? QString() : formatSize(file_info->fileSize));
+            item->setText(2, QString::fromUtf8(file_info->lastModified));
+            item->setData(0, Qt::UserRole, file_info->fileType);
+            bookList->addTopLevelItem(item);
         }
 
     }
@@ -289,8 +308,10 @@ void Book::createDir()
     }
 
     //在列表添加新的项
-    QListWidgetItem* item = new QListWidgetItem(QIcon(":/icon/dir.jpg"), dir_name);
-    bookList->addItem(item);
+    QTreeWidgetItem* item = new QTreeWidgetItem;
+    item->setIcon(0, QIcon(":/icon/dir.jpg"));
+    item->setText(0, dir_name);
+    bookList->addTopLevelItem(item);
 
     //发送用户名，新建文件夹名，目录信息
     QString login_name = TcpClient::getInstance().loginName;
@@ -325,13 +346,13 @@ void Book::flushFile()
 void Book::deleteDirFile()
 {
     //获取文件夹名和目录名
-    QListWidgetItem* item = bookList->currentItem();
+    QTreeWidgetItem* item = bookList->currentItem();
     if(!item){
 
         return;
     }
 
-    QString file_name = item->text();
+    QString file_name = item->text(0);
 
     // 弹出确认对话框
     QMessageBox::StandardButton reply;
@@ -362,7 +383,7 @@ void Book::deleteDirFile()
 void Book::renameDirFile()
 {
     //发送目录信息，要修改的名字以及新文件名
-    QListWidgetItem* item = bookList->currentItem();
+    QTreeWidgetItem* item = bookList->currentItem();
     if(!item){
 
         return;
@@ -374,7 +395,7 @@ void Book::renameDirFile()
         return;
     }
 
-    QString old_name = item->text();
+    QString old_name = item->text(0);
     QString cur_path = TcpClient::getInstance().curPath;
     PDU* pdu = makePDU(cur_path.toUtf8().size()+1);
     pdu->uiMsgType = ENUM_MSG_TYPE_RENAME_DIR_FILE_REQUEST;
@@ -409,11 +430,14 @@ void Book::backDir()
     flushFile();
 }
 
-void Book::enterDir(const QModelIndex &index)
+void Book::enterDir(QTreeWidgetItem* item, int column)
 {
+    Q_UNUSED(column);
+    if (!item) return;
+
     //获取目录信息以及要进入的文件夹
     QString cur_path = TcpClient::getInstance().curPath;
-    QString dir_name = index.data().toString();
+    QString dir_name = item->text(0);
 
     if(dir_name.isEmpty()){
 
@@ -457,9 +481,10 @@ void Book::uploadFile()
     QString fileName = info.fileName();
     qint64 fileSize = info.size();
 
-    // 保存文件路径和大小，供 Worker 使用
-    file_save_path = localFilePath;
-    upload_total = fileSize;
+    // 保存到独立的上传信息结构体
+    m_uploadInfo.localFilePath = localFilePath;
+    m_uploadInfo.totalSize = fileSize;
+    m_uploadInfo.fileName = fileName;
 
     // 发送上传请求
     PDU* pdu = makePDU(cur_path.toUtf8().size() + 1);
@@ -472,8 +497,10 @@ void Book::uploadFile()
 
     upload_state = Uploading;
 
-    // 显示进度条，等待服务器确认
-    showProgress("正在上传", fileName);
+    // 添加进度项
+    ensureProgressDialog();
+    m_uploadInfo.progressItemId = m_progressDialog->addItem(
+        TransferDirection::Upload, fileName);
 }
 
 
@@ -483,7 +510,8 @@ void Book::handleUploadRespond(PDU* pdu)
     QStringList parts = response.split('|');
     if (parts.size() < 2) {
         QMessageBox::warning(this, "上传", "服务器响应格式错误");
-        hideProgress();
+        if (m_progressDialog && m_uploadInfo.progressItemId >= 0)
+            m_progressDialog->removeItem(m_uploadInfo.progressItemId);
         return;
     }
 
@@ -498,14 +526,16 @@ void Book::handleUploadRespond(PDU* pdu)
         }
 
         // 使用Worker设置文件路径，上传
-        QMetaObject::invokeMethod(m_uploadWorker, "setFile", Qt::QueuedConnection, Q_ARG(QString, file_save_path));
+        QMetaObject::invokeMethod(m_uploadWorker, "setFile", Qt::QueuedConnection,
+                                  Q_ARG(QString, m_uploadInfo.localFilePath));
         QMetaObject::invokeMethod(m_uploadWorker, "startUpload", Qt::QueuedConnection);
 
     }
 
     else if (status == FILE_UPLOAD_FAIL) {
         QMessageBox::warning(this, "上传", "服务器准备失败");
-        hideProgress();
+        if (m_progressDialog && m_uploadInfo.progressItemId >= 0)
+            m_progressDialog->removeItem(m_uploadInfo.progressItemId);
     }
 }
 
@@ -539,6 +569,12 @@ void Book::cancelUpload()
 
     upload_state = uploadIdle;
 
+    // 更新进度项为已中断
+    if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
+        TransferItem* it = m_progressDialog->item(m_uploadInfo.progressItemId);
+        if (it) it->setInterrupt();
+    }
+
     // 通知服务器取消上传
     sendCancelUploadRequest();
 
@@ -552,9 +588,9 @@ void Book::cancelUpload()
 
 void Book::onUploadProgress(int percent)
 {
-    if (m_progressDialog) {
-
-        m_progressDialog->setProgress(percent, 100);
+    if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
+        TransferItem* it = m_progressDialog->item(m_uploadInfo.progressItemId);
+        if (it) it->setProgress(percent, 100);
     }
 }
 
@@ -562,9 +598,17 @@ void Book::onUploadFinished(bool success, const QString &message)
 {
     qDebug() << "onUploadFinished, success:" << success << "msg:" << message;
 
-    hideProgress();
+    if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
+        if (success) {
+            TransferItem* it = m_progressDialog->item(m_uploadInfo.progressItemId);
+            if (it) it->setFinished();
+        } else {
+            m_progressDialog->removeItem(m_uploadInfo.progressItemId);
+        }
+    }
 
     upload_state = uploadIdle;
+    m_uploadInfo = UploadTransferInfo();
 
     if (success) {
 
@@ -581,9 +625,12 @@ void Book::onUploadFinished(bool success, const QString &message)
 
 void Book::onUploadError(const QString &error)
 {
-    hideProgress();
+    if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
+        m_progressDialog->removeItem(m_uploadInfo.progressItemId);
+    }
 
     upload_state = uploadIdle;
+    m_uploadInfo = UploadTransferInfo();
 
     QMessageBox::warning(this, "上传错误", error);
 
@@ -600,20 +647,24 @@ void Book::onUploadError(const QString &error)
 
 void Book::downloadFile()
 {
-    //清空缓冲区
-    TcpClient::getInstance().clearSocketBuffer();
+    // 如果有活跃的上传，跳过清空缓冲区（避免丢弃上传响应数据）
+    if (upload_state != Uploading) {
+        TcpClient::getInstance().clearSocketBuffer();
+    }
 
-    QListWidgetItem* item = bookList->currentItem();
+    QTreeWidgetItem* item = bookList->currentItem();
     if (!item) {
         QMessageBox::warning(this, "下载", "请先选择要下载的文件");
         return;
     }
 
-    QString fileName = item->text();
+    QString fileName = item->text(0);
     QString savePath = QFileDialog::getSaveFileName(this, "保存文件", fileName);
     if (savePath.isEmpty()) return;
 
-    file_save_path = savePath;
+    // 保存到独立的下载信息结构体
+    m_downloadInfo.saveFilePath = savePath;
+    m_downloadInfo.fileName = fileName;
     download_state = Preparing;
 
     // 发送下载请求（通过主线程的 socket）
@@ -627,10 +678,14 @@ void Book::downloadFile()
 
     // 设置 worker 文件路径（跨线程，异步）
     QMetaObject::invokeMethod(m_downloadWorker, "setFile",
-                              Qt::QueuedConnection, Q_ARG(QString, file_save_path));
+                              Qt::QueuedConnection, Q_ARG(QString, savePath));
 
     download_state = Receiving;
-    showProgress("正在下载", fileName);
+
+    // 添加进度项
+    ensureProgressDialog();
+    m_downloadInfo.progressItemId = m_progressDialog->addItem(
+        TransferDirection::Download, fileName);
 }
 
 void Book::handleDownloadRespond(PDU *pdu)
@@ -646,8 +701,10 @@ void Book::handleDownloadRespond(PDU *pdu)
     }
 
     qint64 totalSize = parts[1].toLongLong();
+    m_downloadInfo.totalSize = totalSize;
+
     // 确保目录存在
-    QFileInfo info(file_save_path);
+    QFileInfo info(m_downloadInfo.saveFilePath);
     QDir dir = info.absoluteDir();
 
     if (!dir.exists()) {
@@ -682,15 +739,27 @@ void Book::handleDownloadProcess(PDU *pdu)
 
 void Book::onDownloadProgress(qint64 received, qint64 total)
 {
-    updateProgress(received, total);
-
+    if (m_progressDialog && m_downloadInfo.progressItemId >= 0) {
+        TransferItem* it = m_progressDialog->item(m_downloadInfo.progressItemId);
+        if (it) it->setProgress(received, total);
+    }
 }
 
 void Book::onDownloadFinished(bool success, const QString &message)
 {
     qDebug() << "onDownloadFinished调用";
 
-    hideProgress();
+    if (m_progressDialog && m_downloadInfo.progressItemId >= 0) {
+        if (success) {
+            TransferItem* it = m_progressDialog->item(m_downloadInfo.progressItemId);
+            if (it) it->setFinished();
+        } else {
+            m_progressDialog->removeItem(m_downloadInfo.progressItemId);
+        }
+    }
+
+    download_state = Idle;
+    m_downloadInfo = DownloadTransferInfo();
 
     if (success) {
 
@@ -701,20 +770,29 @@ void Book::onDownloadFinished(bool success, const QString &message)
 
         QMessageBox::warning(this, "下载", message);
     }
-
-    download_state = Idle;
 }
 
 void Book::onDownloadError(const QString &error)
 {
-    hideProgress();
-    QMessageBox::warning(this, "下载错误", error);
+    if (m_progressDialog && m_downloadInfo.progressItemId >= 0) {
+        m_progressDialog->removeItem(m_downloadInfo.progressItemId);
+    }
+
     download_state = Idle;
+    m_downloadInfo = DownloadTransferInfo();
+
+    QMessageBox::warning(this, "下载错误", error);
 }
 
 void Book::cancelDownload()
 {
     if (download_state != Receiving) return;
+
+    // 更新进度项为已中断
+    if (m_progressDialog && m_downloadInfo.progressItemId >= 0) {
+        TransferItem* it = m_progressDialog->item(m_downloadInfo.progressItemId);
+        if (it) it->setInterrupt();
+    }
 
     if (m_downloadWorker) {
 
@@ -722,7 +800,6 @@ void Book::cancelDownload()
     }
     // 发送取消请求给服务器
     sendCancelDownloadRequest();
-    hideProgress();
     download_state = Idle;
 }
 
@@ -800,13 +877,13 @@ void Book::handleShareComplete()
 void Book::shareFile()
 {
     //分享者，接收者，文件名，路径
-    QListWidgetItem* item = bookList->currentItem();
+    QTreeWidgetItem* item = bookList->currentItem();
 
     if(!item){
 
         return;
     }
-    shareFileName = item->text();
+    shareFileName = item->text(0);
     QString cur_path = TcpClient::getInstance().curPath;
     QString sender = TcpClient::getInstance().loginName;
 
@@ -863,84 +940,29 @@ void Book::handleShareResponse(PDU *pdu)
 
 
 /*************************************************************************************/
-void Book::showProgress(const QString &title, const QString &file_name)
+void Book::ensureProgressDialog()
 {
-    // 每次都重新创建，确保信号连接有效
-    if(m_progressDialog) {
+    if (!m_progressDialog) {
+        m_progressDialog = new ProgressDialog(this);
+        m_progressDialog->setAttribute(Qt::WA_DeleteOnClose);
+        m_progressDialog->setModal(false);
+        m_progressDialog->setWindowModality(Qt::NonModal);
 
-        m_progressDialog->disconnect();
-        m_progressDialog->close();
-        m_progressDialog->deleteLater();
-        m_progressDialog = nullptr;
+        // 取消信号：根据 transferId 分发到对应操作
+        connect(m_progressDialog, &ProgressDialog::cancelled, this,
+                [this](int transferId) {
+            if (transferId == m_uploadInfo.progressItemId) {
+                cancelUpload();
+            } else if (transferId == m_downloadInfo.progressItemId) {
+                cancelDownload();
+            }
+        });
+
+        // 清空指针
+        connect(m_progressDialog, &QObject::destroyed, this, [this]() {
+            m_progressDialog = nullptr;
+            qDebug() << "进度对话框已销毁";
+        });
     }
-
-    m_progressDialog = new ProgressDialog(this);
-    m_progressDialog->setAttribute(Qt::WA_DeleteOnClose);
-
-    //非模态，能同时进行其他操作
-    m_progressDialog->setModal(false);
-    m_progressDialog->setWindowModality(Qt::NonModal); // 确保不阻塞
-
-
-    // 连接取消信号
-    connect(m_progressDialog, &ProgressDialog::cancelled, this, [this](){
-
-        qDebug() << "=== cancelled 信号被触发 ===";
-        qDebug() << "download_state:" << download_state;
-        qDebug() << "upload_state:" << upload_state;
-
-        if(download_state == Receiving) {
-
-            qDebug() << "进入取消下载分支";
-            cancelDownload();
-
-        }
-
-        else if(upload_state == Uploading) {
-
-            qDebug() << "进入取消上传分支";
-            cancelUpload();
-        }
-
-        else {
-
-            qDebug() << "没有匹配的状态！";
-        }
-
-    }, Qt::QueuedConnection);
-
-    // 连接销毁信号，清空指针
-    connect(m_progressDialog, &QObject::destroyed, this, [this]() {
-
-        m_progressDialog = nullptr;
-        qDebug() << "进度条已销毁";
-    });
-
-    m_progressDialog->setTitle(title);
-    m_progressDialog->setFileName(file_name);
-    m_progressDialog->show();
-}
-
-void Book::updateProgress(qint64 current, qint64 total)
-{
-    if(m_progressDialog && m_progressDialog->isVisible()){
-
-        m_progressDialog->setProgress(current, total);
-    }
-}
-
-void Book::hideProgress()
-{
-    if (!m_progressDialog) return;
-
-    qDebug() << "hideProgress 被调用";
-
-    // 断开所有信号，防止回调
-    m_progressDialog->disconnect();
-    // 关闭对话框（如果设置了 WA_DeleteOnClose，则会自动删除）
-    m_progressDialog->close();
-    // 强制清空指针，避免再次访问
-    m_progressDialog = nullptr;
-
 }
 

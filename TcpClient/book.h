@@ -2,7 +2,8 @@
 #define BOOK_H
 
 #include <QWidget>
-#include <QListWidget>
+#include <QTreeWidget>
+#include <QHeaderView>
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -26,9 +27,6 @@ public:
 
     void updateFileList(const PDU* pdu);
 
-    //上传
-    qint64 file_total_size;
-    qint64 file_recve_size;
     void handleUploadRespond(PDU* pdu);
 
 
@@ -63,7 +61,7 @@ public slots:
     void uploadFile();
     void downloadFile();
     void shareFile();
-    void enterDir(const QModelIndex &index);
+    void enterDir(QTreeWidgetItem* item, int column = 0);
 
 
 private slots:
@@ -79,11 +77,26 @@ private slots:
     void onDownloadError(const QString &error);
 
 private:
-    QListWidget* bookList;
+    QTreeWidget* bookList;
     QPushButton *backPB, *createPB, *renamePB, *flushPB,
         *uploadPB, *downloadPB, *removeDirFilePB, *sharePB;
 
-    QString file_save_path;         //保存上传下载的路径
+    // 上传/下载独立状态
+    struct UploadTransferInfo {
+        QString localFilePath;
+        qint64 totalSize = 0;
+        int progressItemId = -1;
+        QString fileName;
+    };
+    UploadTransferInfo m_uploadInfo;
+
+    struct DownloadTransferInfo {
+        QString saveFilePath;
+        qint64 totalSize = 0;
+        int progressItemId = -1;
+        QString fileName;
+    };
+    DownloadTransferInfo m_downloadInfo;
 
     //上传
     enum FileUploadState{
@@ -92,7 +105,6 @@ private:
         Uploading
     };
     FileUploadState upload_state;
-    QFile upload_file;             // 上传文件
     qint64 upload_sent;
     qint64 upload_total;
     void cancelUpload();
@@ -108,11 +120,9 @@ private:
 
     ThreadPool* m_threadPool;
 
-    //进度条
-    ProgressDialog* m_progressDialog;
-    void showProgress(const QString& title, const QString& file_name);
-    void updateProgress(qint64 current, qint64 total);
-    void hideProgress();
+    //进度条（多项目并发支持）
+    ProgressDialog* m_progressDialog = nullptr;
+    void ensureProgressDialog();
 
     //中断
     void sendCancelUploadRequest();   //通知服务器取消上传
