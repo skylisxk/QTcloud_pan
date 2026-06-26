@@ -21,6 +21,9 @@ public:
     Book* getBook();
     QStackedWidget* getSW();
 
+protected:
+    void closeEvent(QCloseEvent *event) override;
+
 signals:
 
 public slots:

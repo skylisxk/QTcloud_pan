@@ -142,18 +142,21 @@ Book::~Book()
 {
     qDebug() << "Book 析构开始";
 
-    // 先停止并等待线程
-    if (m_uploadThread) {
+    // 先停止并等待线程（最多等3秒，避免卡死）
+    if (m_uploadThread && m_uploadThread->isRunning()) {
         m_uploadThread->quit();
-        m_uploadThread->wait();
+        if (!m_uploadThread->wait(3000)) {
+            qDebug() << "上传线程未能在3秒内退出，强制终止";
+            m_uploadThread->terminate();
+        }
     }
-    if (m_downloadThread) {
+    if (m_downloadThread && m_downloadThread->isRunning()) {
         m_downloadThread->quit();
-        m_downloadThread->wait();
+        if (!m_downloadThread->wait(3000)) {
+            qDebug() << "下载线程未能在3秒内退出，强制终止";
+            m_downloadThread->terminate();
+        }
     }
-
-    // 强制处理事件队列，使deleteLater立即执行
-    QCoreApplication::processEvents();
 
     // 删除worker
     if (m_uploadWorker) {
@@ -167,12 +170,14 @@ Book::~Book()
 
     // 删除线程对象
     delete m_uploadThread;
+    m_uploadThread = nullptr;
     delete m_downloadThread;
+    m_downloadThread = nullptr;
 
     // 清理进度条
     if (m_progressDialog) {
         m_progressDialog->close();
-        m_progressDialog->deleteLater();
+        delete m_progressDialog;
         m_progressDialog = nullptr;
     }
 

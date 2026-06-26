@@ -41,6 +41,9 @@ public:
     Book* book;
     Friend* pFriend;
 
+    // 正在关闭标志，抑制析构过程中的错误弹窗
+    bool m_shuttingDown = false;
+
 public slots:
 
     void receiveMsg();

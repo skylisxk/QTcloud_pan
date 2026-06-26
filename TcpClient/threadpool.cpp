@@ -48,17 +48,17 @@ ThreadPool::ThreadPool(size_t threads) : stop(false), active_tasks(0)
 }
 
 ThreadPool::~ThreadPool(){
-
-    waitForAll();
-
+    // 先发停止信号，让空闲线程立刻退出
     stop = true;
-
     condition.notify_all();
 
+    // 给正在执行的任务一个短窗口完成（最多 500ms）
+    for (int i = 0; i < 50 && !idle(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
     for(thread& worker : workers){
-
         if(worker.joinable()){
-
             worker.join();
         }
     }
@@ -82,7 +82,13 @@ bool ThreadPool::idle() const
 
 void ThreadPool::waitForAll()
 {
-    while(!idle()) {
+    int max_wait_ms = 5000;  // 最多等5秒
+    int waited = 0;
+    while(!idle() && waited < max_wait_ms) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        waited += 10;
+    }
+    if (!idle()) {
+        qDebug() << "ThreadPool: 仍有未完成任务，强制结束等待";
     }
 }

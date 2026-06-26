@@ -3,12 +3,16 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QCloseEvent>
+#include <QApplication>
 
 OpeWidget::OpeWidget(QWidget *parent)
 {
     // ========== 设置整体样式 ==========
     this->setMinimumSize(960, 520);
     this->setStyleSheet("QWidget { background-color: #f0f2f5; }");
+    // 关闭窗口时自动销毁，配合 QApplication::quit() 确保进程完全退出
+    setAttribute(Qt::WA_DeleteOnClose);
 
     // ========== 侧边栏整体容器 ==========
     QWidget* sidebarWidget = new QWidget(this);
@@ -133,19 +137,33 @@ OpeWidget::OpeWidget(QWidget *parent)
 
 OpeWidget::~OpeWidget()
 {
-
     qDebug() << "OpeWidget 析构";
-    // 断开所有信号，避免在析构中触发
-    disconnect();
-    // 手动删除子对象，确保它们在 QApplication 还存在时销毁
+    // 手动删除子对象（包含线程清理），确保在 ThreadPool 销毁前完成
     delete pFriend;
+    pFriend = nullptr;
     delete pBook;
+    pBook = nullptr;
     delete listWidget;
     delete refreshTimer;
-    // 不delete pSW，可能是其他对象的父对象
-    pFriend = nullptr;
-    pBook = nullptr;
+}
 
+void OpeWidget::closeEvent(QCloseEvent *event)
+{
+    // 发送下线请求，确保服务器及时更新 online 状态
+    QString name = TcpClient::getInstance().loginName;
+    QTcpSocket& sock = TcpClient::getInstance().getTcpSocket();
+    if (!name.isEmpty() && sock.state() == QAbstractSocket::ConnectedState) {
+        TcpClient::getInstance().m_shuttingDown = true;
+        PDU* pdu = makePDU();
+        pdu->uiMsgType = ENUM_MSG_TYPE_LOGIN_OUT_REQUEST;
+        qstrncpy(pdu->caData, name.toUtf8().constData(), 64);
+        sock.write((char*)pdu, pdu->uiPDUlen);
+        sock.flush();  // 确保数据立即发出
+        free(pdu);
+    }
+    event->accept();
+    // 强制退出事件循环，确保进程完全终止
+    QApplication::quit();
 }
 
 OpeWidget &OpeWidget::getInstance()

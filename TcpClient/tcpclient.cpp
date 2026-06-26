@@ -46,22 +46,33 @@ TcpClient::~TcpClient()
 {
     qDebug() << "TcpClient 析构开始";
 
-    //清理
-    if(book) {
+    // 先断开所有 socket 信号，防止清理过程触发错误弹窗
+    disconnect(&tcpSocket, nullptr, this, nullptr);
+    m_shuttingDown = true;
 
-        delete book;
-        book = nullptr;
+    // 兜底：如果 OpeWidget 的 closeEvent 没触发到，这里再发一次下线请求
+    // 只有 socket 确实连接着才写，避免触发 BrokenPipe
+    if (!loginName.isEmpty()
+        && tcpSocket.state() == QAbstractSocket::ConnectedState) {
+        PDU* pdu = makePDU();
+        pdu->uiMsgType = ENUM_MSG_TYPE_LOGIN_OUT_REQUEST;
+        qstrncpy(pdu->caData, loginName.toUtf8().constData(), 64);
+        tcpSocket.write((char*)pdu, pdu->uiPDUlen);
+        tcpSocket.flush();
+        free(pdu);
     }
 
-    if(pFriend){
-
-        delete pFriend;
-        pFriend = nullptr;
-    }
+    // book 和 pFriend 由 OpeWidget 管理生命周期，这里只置空
+    // （OpeWidget 析构函数先于本析构函数执行，已经 delete 过了）
+    book = nullptr;
+    pFriend = nullptr;
 
     // 关闭 socket
     if(tcpSocket.isOpen()) {
-        tcpSocket.close();
+        tcpSocket.disconnectFromHost();
+        if (tcpSocket.state() != QAbstractSocket::UnconnectedState) {
+            tcpSocket.waitForDisconnected(1500);
+        }
     }
 
     delete ui;
@@ -200,9 +211,10 @@ void TcpClient::handlePdu(PDU* pdu){
     }
 
     case ENUM_MSG_TYPE_LOGIN_OUT_RESPOND:{
-
-        QMessageBox::information(this, "Login Out", "login out success");
-
+        // 关闭过程中不弹窗，避免阻塞退出流程
+        if (!m_shuttingDown) {
+            QMessageBox::information(this, "Login Out", "login out success");
+        }
         break;
     }
 
@@ -434,6 +446,10 @@ void TcpClient::onDisconnected()
 void TcpClient::onError(QAbstractSocket::SocketError error)
 {
     qDebug() << "socket错误:" << error;
+    // 关闭过程中不弹窗，避免阻塞退出
+    if (m_shuttingDown) return;
+    // 服务端主动断开是正常行为，不弹窗骚扰用户
+    if (error == QAbstractSocket::RemoteHostClosedError) return;
     QMessageBox::warning(this, "连接错误", "无法连接到服务器");
 }
 
