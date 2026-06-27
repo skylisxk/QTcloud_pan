@@ -1,7 +1,7 @@
 #include "uploadworker.h"
 
 UploadWorker::UploadWorker(QObject *parent)
-    : QObject(parent), m_fileSize(0), m_sent(0), m_cancel(false), m_uploadId(0)
+    : QObject(parent), m_fileSize(0), m_sent(0), m_startPos(0), m_cancel(false), m_uploadId(0)
 {
     // 使用成员定时器替代 QTimer::singleShot，便于在 setFile 时停止旧定时器
     m_timer = new QTimer(this);
@@ -27,19 +27,35 @@ void UploadWorker::setFile(const QString &filePath)
 
     m_fileSize = m_file.size();
     m_sent = 0;
+    m_startPos = 0;  // 默认从头开始，setStartPos() 可覆盖
     m_cancel = false;
+}
+
+// ★断点续传：设置起始读取偏移。必须在 setFile() 之后、startUpload() 之前调用
+void UploadWorker::setStartPos(qint64 pos)
+{
+    m_startPos = pos;
 }
 
 void UploadWorker::startUpload()
 {
-    qDebug() << "UploadWorker::startUpload in thread, id:" << m_uploadId;
+    qDebug() << "UploadWorker::startUpload in thread, id:" << m_uploadId
+             << "startPos:" << m_startPos;
 
     if (!m_file.isOpen()) {
         emit errorOccurred("文件未打开，请先调用 setFile", m_uploadId);
         return;
     }
 
-    // 拷贝当前 uploadId，防止本地上传过程中 m_uploadId 被 setFile 修改
+    // ★断点续传：如果起始位置>0，则跳过已上传部分，从断点处继续读取
+    if (m_startPos > 0) {
+        if (!m_file.seek(m_startPos)) {
+            emit errorOccurred("无法定位到断点位置: " + QString::number(m_startPos), m_uploadId);
+            return;
+        }
+        qDebug() << "断点续传：从偏移" << m_startPos << "继续上传";
+    }
+
     // 开始发送第一块
     sendNextBlock();
 }
@@ -75,9 +91,10 @@ void UploadWorker::sendNextBlock()
         return;
     }
 
-    // 计算百分比
+    // 计算百分比（★断点续传：进度 = (已跳过 + 已发送) / 总大小 * 100）
     m_sent += buffer.size();
-    int percent = static_cast<int>(m_sent * 100 / m_fileSize);
+    qint64 totalSent = m_startPos + m_sent;
+    int percent = static_cast<int>(totalSent * 100 / m_fileSize);
     emit progressUpdated(percent, currentId);
 
     emit dataBlockReady(buffer, currentId);            // 将数据传给主线程

@@ -92,62 +92,94 @@ void MyTcpSocket::onReadyRead()
 {
     if (m_isClosing) return;
 
-    // 外层循环：因为清理残留数据后可能暴露出合法PDU，需要循环处理
-    // 最多迭代3次避免死循环（PDU→文件数据→清理→PDU 各一次）
+    // 最多迭代3次，每轮处理一种数据，避免死循环
     for (int loop = 0; loop < 3 && bytesAvailable() > 0; loop++) {
         bool didWork = false;
 
-        // 第一步：解析协议消息（包括取消请求）
-        const int MAX_PDU = 10;
-        int processed = 0;
-
-        while (bytesAvailable() >= sizeof(unsigned int) && processed < MAX_PDU) {
-            unsigned int testLen = 0;
-            peek((char*)&testLen, sizeof(unsigned int));
-
-            if (testLen >= sizeof(PDU) && testLen <= 10 * 1024 * 1024) {
-                if (!tryParsePDU()) break;
-                processed++;
-                didWork = true;
-            } else {
-                break;
+        // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+        // 第一步：如果正在接收文件数据，优先处理文件数据！
+        // ★ 必须在通用PDU解析之前！因为二进制文件数据的头4字节可能凑巧
+        //    落入 [sizeof(PDU), 10MB] 区间，被误判为合法PDU长度头，
+        //    导致文件数据被当成协议消息解析，出现垃圾消息类型并卡死。
+        // ★ 但必须允许中断PDU（取消请求）穿过！否则取消请求会被当作
+        //    文件数据吃掉，服务器永远卡在Receiving状态。
+        // ★ 安全策略：只解析已知的控制PDU（UPLOAD_CANCEL_REQUEST/
+        //    DOWNLOAD_CANCEL_REQUEST，长度精确76字节，无caMsg），
+        //    绝对不碰普通PDU（可能被文件数据伪装）。
+        // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+        if (upload_state == Receiving && bytesAvailable() >= sizeof(unsigned int)) {
+            // —— 检查是否有中断控制PDU（取消请求），允许它穿透文件数据流 ——
+            // 仅识别长度精确=76（sizeof(PDU)）、消息类型为取消类的PDU。
+            // 文件数据碰巧形成"76字节长度 + 消息类型46/47"的概率可忽略。
+            bool foundControlPdu = false;
+            if (bytesAvailable() >= sizeof(PDU)) {
+                char header[8];
+                peek(header, 8);
+                unsigned int pduLen = *(unsigned int*)(header);
+                unsigned int msgType = *(unsigned int*)(header + 4);
+                if (pduLen == sizeof(PDU)
+                    && (msgType == ENUM_MSG_TYPE_UPLOAD_CANCEL_REQUEST
+                        || msgType == ENUM_MSG_TYPE_DOWNLOAD_CANCEL_REQUEST)) {
+                    if (tryParsePDU()) {
+                        didWork = true;
+                        foundControlPdu = true;
+                        qDebug() << "Receiving状态下解析到取消PDU, msgType:" << msgType;
+                    }
+                }
             }
+
+            if (!foundControlPdu) {
+                // 没有控制PDU，正常读取文件数据（限量保护后续PDU）
+                const qint64 MAX_CHUNK = 64 * 1024;
+                qint64 remaining = file_recve_total - file_recve;
+                qint64 toRead = qMin(bytesAvailable(), qMin(MAX_CHUNK, remaining));
+
+                if (toRead > 0) {
+                    QByteArray data = read(toRead);
+                    if (!data.isEmpty()) {
+                        q_file.write(data);
+                        file_recve += data.size();
+                        didWork = true;
+
+                        if (file_recve >= file_recve_total) {
+                            handleUploadComplete();
+                        }
+                    }
+                }
+            }
+            // 处理完后继续循环
+            if (didWork && bytesAvailable() > 0) continue;
         }
 
-        // 第二步：处理文件数据上传
-        // ★ 关键：只读取预期剩余字节数，绝不多读！
-        //    因为缓冲区中可能已经包含下一个PDU（如新UPLOAD_REQUEST），
-        //    如果 readAll() 会把它当文件数据吃掉，导致客户端永远等待。
-        if (upload_state == Receiving && bytesAvailable() > 0) {
-            const qint64 MAX_CHUNK = 64 * 1024;
-            qint64 remaining = file_recve_total - file_recve;
-            qint64 toRead = qMin(bytesAvailable(), qMin(MAX_CHUNK, remaining));
+        // 第二步：解析协议消息（仅在非Receiving状态下）
+        //  Receiving 状态下不解析PDU，因为缓冲区里的"PDU头"大概率是文件数据
+        if (upload_state != Receiving && bytesAvailable() >= sizeof(unsigned int)) {
+            const int MAX_PDU = 10;
+            int processed = 0;
 
-            if (toRead > 0) {
-                QByteArray data = read(toRead);
-                if (!data.isEmpty()) {
-                    q_file.write(data);
-                    file_recve += data.size();
+            while (bytesAvailable() >= sizeof(unsigned int) && processed < MAX_PDU) {
+                unsigned int testLen = 0;
+                peek((char*)&testLen, sizeof(unsigned int));
+
+                if (testLen >= sizeof(PDU) && testLen <= 10 * 1024 * 1024) {
+                    if (!tryParsePDU()) break;
+                    processed++;
                     didWork = true;
-
-                    if (file_recve >= file_recve_total) {
-                        handleUploadComplete();
-                    }
+                } else {
+                    break;
                 }
             }
         }
 
         // 第三步：清理非上传状态下缓冲区中的残留文件数据
         // ★ 只丢弃前端不构成有效PDU的字节，不能 readAll()！
-        //    因为残留文件数据后面可能紧跟着合法PDU（例如：中断后重传时，
-        //    旧上传的尾部数据和新UPLOAD_REQUEST PDU可能在同一个TCP包中）
-        else if (upload_state != Receiving && bytesAvailable() >= sizeof(unsigned int)) {
+        if (upload_state != Receiving && !didWork && bytesAvailable() >= sizeof(unsigned int)) {
             qint64 discarded = 0;
             while (bytesAvailable() >= sizeof(unsigned int)) {
                 unsigned int testLen = 0;
                 peek((char*)&testLen, sizeof(unsigned int));
                 if (testLen >= sizeof(PDU) && testLen <= 10 * 1024 * 1024) {
-                    // 找到有效PDU头，停止丢弃，外层循环会回来解析它
+                    // 找到有效PDU头，停止丢弃，下一轮循环会解析它
                     break;
                 }
                 char c;
@@ -838,6 +870,8 @@ void MyTcpSocket::handleUploadRequest(PDU *pdu)
     }
 
     // 解析请求
+    // ★断点续传：协议格式 — "fileName|fileSize|startPos"
+    //   startPos 为可选字段（兼容旧协议）；默认0表示全新上传
     QString path = QString::fromUtf8((char*)pdu->caMsg);
     QStringList parts = QString::fromUtf8(pdu->caData).split('|');
 
@@ -851,33 +885,88 @@ void MyTcpSocket::handleUploadRequest(PDU *pdu)
     QString original_file_name = parts[0];
     qint64 file_size = parts[1].toLongLong();
 
-    qDebug() << "文件名:" << original_file_name << "大小:" << file_size;
+    // ★断点续传：解析 startPos（第三个字段，可选，兼容旧版本）
+    qint64 startPos = 0;
+    if (parts.size() >= 3) {
+        startPos = parts[2].toLongLong();
+    }
+
+    qDebug() << "文件名:" << original_file_name << "大小:" << file_size
+             << "startPos:" << startPos;
 
     // 准备文件
     QString full_path = path + '/' + original_file_name;
 
-    // 文件名相同的时候添加(1)
-    QString unique_path = getUniqueName(full_path);
-    q_file.setFileName(unique_path);
+    // ★断点续传：如果是续传，尝试打开已存在的部分文件
+    if (startPos > 0) {
+        QFileInfo existingFile(full_path);
+        if (existingFile.exists() && existingFile.isFile()) {
+            // 部分文件存在 — 确定实际续传偏移
+            // 客户端 startPos 可能因 TCP 缓冲略大于服务端实际文件大小，
+            // 取较小值作为续传起点，避免文件出现空洞。
+            qint64 actualPos = qMin(startPos, existingFile.size());
+            if (actualPos < startPos) {
+                // 服务端文件比客户端预期小，截断到服务端实际大小
+                qDebug() << "调整续传偏移:" << startPos << "→" << actualPos
+                         << "(服务端文件实际大小:" << existingFile.size() << ")";
+            }
 
-    // 提取实际文件名（用于响应）
-    QString actual_file_name = QFileInfo(unique_path).fileName();
+            q_file.setFileName(full_path);
+            // 使用 ReadWrite 模式以便截断（Append 模式无法截断）
+            if (!q_file.open(QIODevice::ReadWrite)) {
+                qDebug() << "无法打开文件进行续传";
+                sendUploadResponse(FILE_UPLOAD_FAIL, original_file_name);
+                return;
+            }
+            // 截断到 actualPos（去除可能残留的尾部不完整数据）
+            if (q_file.size() > actualPos) {
+                q_file.resize(actualPos);
+            }
+            // 定位到续传起点
+            q_file.seek(actualPos);
+            qDebug() << "断点续传：从偏移" << actualPos << "继续接收文件:" << full_path;
+            // 用 actualPos 覆盖 startPos，后续 file_recve 计数以此为准
+            startPos = actualPos;
+        } else {
+            // 部分文件不存在（可能被清理了），回退到全新上传
+            qDebug() << "续传文件不存在，回退到全新上传:" << full_path;
+            startPos = 0;
+            QString unique_path = getUniqueName(full_path);
+            q_file.setFileName(unique_path);
+            if(!q_file.open(QIODevice::WriteOnly)) {
+                qDebug() << "无法创建文件";
+                sendUploadResponse(FILE_UPLOAD_FAIL, QFileInfo(unique_path).fileName());
+                upload_state = Idle;
+                return;
+            }
+            full_path = unique_path;
+            original_file_name = QFileInfo(unique_path).fileName();
+        }
+    } else {
+        // 全新上传：使用唯一文件名（防重名）
+        QString unique_path = getUniqueName(full_path);
+        q_file.setFileName(unique_path);
 
-
-    if(!q_file.open(QIODevice::WriteOnly)) {
-
-        qDebug() << "无法创建文件";
-        sendUploadResponse(FILE_UPLOAD_FAIL, actual_file_name);
-        upload_state = Idle;
-        return;
+        if(!q_file.open(QIODevice::WriteOnly)) {
+            qDebug() << "无法创建文件";
+            sendUploadResponse(FILE_UPLOAD_FAIL, QFileInfo(unique_path).fileName());
+            upload_state = Idle;
+            return;
+        }
+        // 更新 full_path 和 original_file_name 以反映实际文件名
+        full_path = unique_path;
+        original_file_name = QFileInfo(unique_path).fileName();
     }
 
-    // 设置为接收状态
+    // 提取实际文件名（用于响应）
+    QString actual_file_name = QFileInfo(full_path).fileName();
+
+    // 设置为接收状态（★断点续传：已接收量从 startPos 开始计数）
     upload_state = Receiving;
     file_recve_total = file_size;
-    file_recve = 0;
+    file_recve = startPos;  // 续传时已有 startPos 字节
 
-    // 发送准备就绪响应，并告知实际文件名
+    // 发送准备就绪响应，并告知实际文件名（★断点续传：同时告知服务端实际的续传偏移）
     if (actual_file_name != original_file_name) {
 
         // 文件被重命名了，发送新文件名
@@ -885,12 +974,22 @@ void MyTcpSocket::handleUploadRequest(PDU *pdu)
     }
 
     else {
-
-        sendUploadResponse(FILE_UPLOAD_PROCESS, actual_file_name);
+        // ★断点续传：响应中携带 actualStartPos，客户端用它替代自己的估算值
+        // 格式: "file uploading|fileName|actualStartPos"
+        PDU* pdu = makePDU();
+        pdu->uiMsgType = ENUM_MSG_TYPE_UPLOAD_PROCESS;
+        QString response = QString("%1|%2|%3")
+                               .arg(FILE_UPLOAD_PROCESS)
+                               .arg(actual_file_name)
+                               .arg(file_recve);  // 服务端实际续传起点
+        qstrncpy(pdu->caData, response.toUtf8().constData(), 64);
+        write((char*)pdu, pdu->uiPDUlen);
+        delete pdu;
 
     }
 
-    qDebug() << "开始接收文件:" << full_path;
+    qDebug() << "开始接收文件:" << full_path
+             << "已接收:" << file_recve << "/" << file_recve_total;
 
 
     // 立即检查是否有数据（可能请求和数据一起到达）
@@ -902,26 +1001,21 @@ void MyTcpSocket::handleUploadRequest(PDU *pdu)
 }
 
 
-// 处理文件上传数据
+// 处理文件上传数据（仅在handleUploadRequest末尾调用一次，处理与请求同时到达的数据）
 void MyTcpSocket::handleUploadData()
 {
     qDebug() << "handleUploadData调用";
 
     if (upload_state != Receiving) return;
 
-    // 限制单次读取大小，避免阻塞
+    // ★ 限制读取量：绝不超过剩余需要接收的字节数
     const qint64 MAX_CHUNK = 64 * 1024;  // 64KB
-    QByteArray buffer;
+    qint64 remaining = file_recve_total - file_recve;
+    qint64 toRead = qMin(bytesAvailable(), qMin((qint64)MAX_CHUNK, remaining));
 
-    // 读取缓冲区数据块
-    if (bytesAvailable() > MAX_CHUNK) {
+    if (toRead <= 0) return;
 
-        buffer = read(MAX_CHUNK);
-    }
-    else {
-
-        buffer = readAll();
-    }
+    QByteArray buffer = read(toRead);
 
     if (buffer.isEmpty()) return;
 
@@ -951,6 +1045,21 @@ void MyTcpSocket::handleUploadComplete()
 
     q_file.close();
 
+    // ★安全检查：验证最终文件大小，必要时截断到预期值
+    // 防止因 resize/seek 边缘情况或历史残留导致文件偏大
+    QFileInfo finalInfo(q_file.fileName());
+    if (finalInfo.exists() && finalInfo.size() != file_recve_total) {
+        qDebug() << "WARNING: 文件大小不匹配! 预期:" << file_recve_total
+                 << "实际:" << finalInfo.size() << "差值:" << (finalInfo.size() - file_recve_total);
+        // 截断到正确大小
+        QFile fixFile(q_file.fileName());
+        if (fixFile.open(QIODevice::ReadWrite)) {
+            fixFile.resize(file_recve_total);
+            fixFile.close();
+            qDebug() << "已截断文件到正确大小:" << file_recve_total;
+        }
+    }
+
     // 发送完成响应
     PDU* pdu = makePDU();
     addHelper(pdu, FILE_UPLOAD_DONE, ENUM_MSG_TYPE_UPLOAD_FINISH);
@@ -970,7 +1079,7 @@ void MyTcpSocket::handleUploadComplete()
     // onReadyRead() 会在文件数据处理之后、PDU解析之前统一清理非PDU残留数据。
     // 如果这里 readAll()，会吞掉紧随文件数据到达的下一个UPLOAD_REQUEST PDU。
 
-    qDebug() << "=== handleUploadComplete called ===";
+    qDebug() << "=== handleUploadComplete done ===";
 
 
 }
@@ -1009,20 +1118,14 @@ void MyTcpSocket::handleUploadCancelRequest(PDU *pdu)
     // 修改状态
     m_cancelUpload = true;
 
-    // 关闭正在接收的文件
+    // 关闭正在接收的文件（★断点续传：保留部分文件，不删除）
     if(q_file.isOpen()) {
         q_file.close();
     }
 
-    QString file_path = q_file.fileName();
-
-    //删除文件
-    if(!file_path.isEmpty() && QFile::exists(file_path)){
-
-        QFile::remove(file_path);
-        qDebug() << "删除未完成的临时文件:" << file_path;
-
-    }
+    // ★断点续传：不再删除部分文件！
+    // 保留 file_recve 字节的部分文件在磁盘上，供下次断点续传使用。
+    // 如果用户不想续传，客户端会发送 startPos=0 的新请求，服务器会创建新文件。
 
     //重置
     upload_state = Idle;
@@ -1084,14 +1187,33 @@ void MyTcpSocket::handleDownloadRequest(PDU *pdu)
         return;
     }
 
+    // ★断点续传：解析请求 "fileName|startPos"（startPos 可选，兼容旧协议）
+    QStringList requestParts = QString::fromUtf8(pdu->caData).split('|');
+    QString file_name = requestParts[0];
+    qint64 startPos = 0;
+    if (requestParts.size() >= 2) {
+        startPos = requestParts[1].toLongLong();
+    }
+
     // 获取路径和名称
-    QString file_name = QString::fromUtf8(pdu->caData);
     QString path = QString::fromUtf8((char*)pdu->caMsg) + '/' + file_name;
 
     QFileInfo fileInfo(path);
     if(!fileInfo.exists() || !fileInfo.isFile()) {
         handleDownloadError("file not exist");
         return;
+    }
+
+    // 获取文件大小
+    qint64 file_size = fileInfo.size();
+
+    // ★断点续传：验证 startPos 是否有效
+    if (startPos > 0) {
+        if (startPos >= file_size) {
+            // 已经下载完成（文件可能被截断），从0开始
+            qDebug() << "断点位置>=文件大小，从头下载";
+            startPos = 0;
+        }
     }
 
     download_file = new QFile(path);
@@ -1102,13 +1224,19 @@ void MyTcpSocket::handleDownloadRequest(PDU *pdu)
         return;
     }
 
-    // 获取文件大小
-    qint64 file_size = fileInfo.size();
+    // ★断点续传：定位到断点位置开始读取
+    if (startPos > 0) {
+        if (!download_file->seek(startPos)) {
+            handleDownloadError("seek failed");
+            return;
+        }
+        qDebug() << "断点续传下载：从偏移" << startPos << "开始发送, 文件总大小:" << file_size;
+    }
 
-    // 修改状态
+    // 修改状态（★download_sent 从 startPos 开始计数）
     download_state = d_receiving;
     download_total = file_size;
-    download_sent = 0;
+    download_sent = startPos;
 
     // 发送文件名和大小
     PDU* res_pdu = makePDU(0);
@@ -1119,7 +1247,7 @@ void MyTcpSocket::handleDownloadRequest(PDU *pdu)
     // 启动定时器，每 10ms 发送一块
     m_downloadTimer->start(10);
 
-    qDebug() << "开始下载，文件大小:" << file_size;
+    qDebug() << "开始下载，文件大小:" << file_size << "startPos:" << startPos;
 }
 
 void MyTcpSocket::sendNextChunk()

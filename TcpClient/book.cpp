@@ -132,10 +132,15 @@ Book::Book(QWidget *parent)
     connect(m_uploadWorker, &UploadWorker::dataBlockReady,
             this, [this](const QByteArray &data, int uploadId) {
 
-                // 如果上传ID不匹配或状态不是 Uploading，说明已取消/属于旧上传，忽略
-                if (uploadId != m_currentUploadId || upload_state != Uploading) {
-                    qDebug() << "忽略数据块, uploadId:" << uploadId
-                             << "current:" << m_currentUploadId
+                // ★ 第一层保护：如果uploadId不匹配，说明属于旧上传，直接忽略
+                if (uploadId != m_currentUploadId) {
+                    qDebug() << "忽略旧上传数据块, uploadId:" << uploadId
+                             << "current:" << m_currentUploadId;
+                    return;
+                }
+                // ★ 第二层保护：状态不是Uploading（可能已被取消），忽略
+                if (upload_state != Uploading) {
+                    qDebug() << "忽略数据块(状态非Uploading), uploadId:" << uploadId
                              << "state:" << upload_state;
                     return;
                 }
@@ -144,15 +149,15 @@ Book::Book(QWidget *parent)
                 qint64 sent = socket.write(data);
                 qDebug() << "socket write sent:" << sent;
 
-
                 // 如果写入大小不符，说明发送失败
                 if (sent != data.size()) {
-
                     qDebug() << "socket write error, sent:" << sent << "expected:" << data.size();
-                    // 取消上传
-                    QMetaObject::invokeMethod(m_uploadWorker, "cancelUpload", Qt::QueuedConnection);
-
-                    upload_state = uploadIdle;
+                    // ★ 通过 cancelUpload() 统一处理，它会：
+                    //   1) 设置 upload_state = uploadIdle
+                    //   2) 发送取消请求给服务端
+                    //   3) 通知 Worker 停止
+                    // 不直接修改 upload_state，避免与 cancel 流程竞态
+                    QMetaObject::invokeMethod(this, "cancelUpload", Qt::QueuedConnection);
                 }
             }, Qt::QueuedConnection);
 
@@ -508,6 +513,36 @@ void Book::uploadFile()
     QString fileName = info.fileName();
     qint64 fileSize = info.size();
 
+    // ★断点续传：检测是否是上一次中断的文件再次上传
+    qint64 startPos = 0;
+    if (localFilePath == m_uploadInfo.localFilePath
+        && m_uploadInfo.uploadedSize > 0
+        && m_uploadInfo.uploadedSize < fileSize
+        && m_uploadInfo.totalSize == fileSize)
+    {
+        // 同一文件且未传完，询问用户是否断点续传
+        QString msg = QString("检测到上一次上传中断在 %1 / %2\n\n"
+                               "是否从断点处继续上传？\n"
+                               "(选择 No 将从头开始上传)")
+                           .arg(formatSize(m_uploadInfo.uploadedSize))
+                           .arg(formatSize(fileSize));
+        int ret = QMessageBox::question(this, "断点续传", msg,
+                                        QMessageBox::Yes | QMessageBox::No);
+        if (ret == QMessageBox::Yes) {
+            startPos = m_uploadInfo.uploadedSize;
+            // serverFileName 保留，用于定位服务端的部分文件
+        } else {
+            // 用户选择从头开始，清除续传记录（含服务端文件名）
+            m_uploadInfo.uploadedSize = 0;
+            m_uploadInfo.serverFileName.clear();
+        }
+    }
+    else {
+        // 不同文件或新文件，重置续传记录（含服务端文件名）
+        m_uploadInfo.uploadedSize = 0;
+        m_uploadInfo.serverFileName.clear();
+    }
+
     // 递增上传ID，使上一次上传的延迟信号被忽略
     m_currentUploadId++;
 
@@ -516,21 +551,40 @@ void Book::uploadFile()
     m_uploadInfo.totalSize = fileSize;
     m_uploadInfo.fileName = fileName;
 
-    // 发送上传请求
+    // ★断点续传：续传时必须使用服务端分配的文件名（可能因重命名而与本地名不同）
+    // 例如：本地 "file" → 服务端 "file(1)"，续传定位的是 "file(1)" 而非原始 "file"
+    QString uploadFileName = (startPos > 0 && !m_uploadInfo.serverFileName.isEmpty())
+                                 ? m_uploadInfo.serverFileName
+                                 : fileName;
+
+    // 发送上传请求（★断点续传：caData 携带 startPos）
     PDU* pdu = makePDU(cur_path.toUtf8().size() + 1);
     pdu->uiMsgType = ENUM_MSG_TYPE_UPLOAD_REQUEST;
     qstrncpy((char*)pdu->caMsg, cur_path.toUtf8().constData(), pdu->uiMsglen);
-    QString dataStr = QString("%1|%2").arg(fileName).arg(fileSize);
+    // 协议格式: "fileName|fileSize|startPos"
+    // startPos=0 表示全新上传，>0 表示从该偏移续传
+    QString dataStr = QString("%1|%2|%3").arg(uploadFileName).arg(fileSize).arg(startPos);
     qstrncpy(pdu->caData, dataStr.toUtf8().constData(), 64);
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
     delete pdu;
 
     upload_state = Uploading;
+    qDebug() << ">>> upload_state→Uploading in uploadFile(), currentId:" << m_currentUploadId
+             << "startPos:" << startPos;
 
     // 添加进度项
     ensureProgressDialog();
     m_uploadInfo.progressItemId = m_progressDialog->addItem(
         TransferDirection::Upload, fileName);
+
+    // ★断点续传：如果续传，立即显示起始进度
+    if (startPos > 0 && m_uploadInfo.progressItemId >= 0) {
+        TransferItem* it = m_progressDialog->item(m_uploadInfo.progressItemId);
+        if (it) {
+            int initPercent = static_cast<int>(startPos * 100 / fileSize);
+            it->setProgress(initPercent, 100);
+        }
+    }
 }
 
 
@@ -539,11 +593,16 @@ void Book::handleUploadRespond(PDU* pdu)
     QString response = QString::fromUtf8(pdu->caData);
     QStringList parts = response.split('|');
     if (parts.size() < 2) {
-        QMessageBox::warning(this, "上传", "服务器响应格式错误");
+        qDebug() << "!!! [STATE-1] upload_state→idle (格式错误), currentId:" << m_currentUploadId;
+        // ★断点续传：保留 m_uploadInfo 不清空，只重置进度项
         if (m_progressDialog && m_uploadInfo.progressItemId >= 0)
             m_progressDialog->removeItem(m_uploadInfo.progressItemId);
+        m_uploadInfo.progressItemId = -1;
         upload_state = uploadIdle;
-        m_uploadInfo = UploadTransferInfo();
+        // ★ 避免 nested event loop：延迟显示对话框
+        QTimer::singleShot(0, this, [this]() {
+            QMessageBox::warning(this, "上传", "服务器响应格式错误");
+        });
         return;
     }
 
@@ -551,26 +610,58 @@ void Book::handleUploadRespond(PDU* pdu)
     QString actualFileName = parts[1];
 
     if (status == FILE_UPLOAD_PROCESS || status == FILE_UPLOAD_RENAME) {
+        qDebug() << ">>> handleUploadRespond SUCCESS, status:" << status
+                 << "fileName:" << actualFileName
+                 << "currentId:" << m_currentUploadId
+                 << "uploadedSize:" << m_uploadInfo.uploadedSize;
+
+        // ★断点续传：记住服务端实际使用的文件名（可能因重命名而与本地名不同）
+        // 下次续传必须用服务端文件名，否则会定位到错误的文件
+        m_uploadInfo.serverFileName = actualFileName;
 
         if (status == FILE_UPLOAD_RENAME) {
+            // ★ 避免 nested event loop：用 queued 方式显示信息
+            QTimer::singleShot(0, this, [this, actualFileName]() {
+                QMessageBox::information(this, "提示", QString("文件已重命名为: %1").arg(actualFileName));
+            });
+        }
 
-            QMessageBox::information(this, "提示", QString("文件已重命名为: %1").arg(actualFileName));
+        // ★断点续传：解析服务端返回的实际续传偏移
+        // 响应格式: "status|fileName|actualStartPos"（actualStartPos 可选，兼容旧协议）
+        qint64 serverStartPos = 0;
+        if (parts.size() >= 3) {
+            serverStartPos = parts[2].toLongLong();
+        }
+        if (serverStartPos > 0) {
+            m_uploadInfo.uploadedSize = serverStartPos;  // 以服务端为准
         }
 
         // 使用Worker设置文件路径，上传
         QMetaObject::invokeMethod(m_uploadWorker, "setFile", Qt::QueuedConnection,
                                   Q_ARG(QString, m_uploadInfo.localFilePath));
+
+        // ★断点续传：如果保存了已上传偏移量，传递给 Worker
+        if (m_uploadInfo.uploadedSize > 0) {
+            QMetaObject::invokeMethod(m_uploadWorker, "setStartPos", Qt::QueuedConnection,
+                                      Q_ARG(qint64, m_uploadInfo.uploadedSize));
+        }
+
         QMetaObject::invokeMethod(m_uploadWorker, "startUpload", Qt::QueuedConnection);
 
     }
 
     else if (status == FILE_UPLOAD_FAIL) {
-        QMessageBox::warning(this, "上传", "服务器准备失败，请重试");
+        qDebug() << "!!! [STATE-2] upload_state→idle (服务器FAIL), currentId:" << m_currentUploadId;
+        // ★断点续传：保留 m_uploadInfo 中的 uploadedSize 等字段，不清空
+        // 仅重置进度项ID
         if (m_progressDialog && m_uploadInfo.progressItemId >= 0)
             m_progressDialog->removeItem(m_uploadInfo.progressItemId);
-        // 重置上传状态，允许用户重试
+        m_uploadInfo.progressItemId = -1;
         upload_state = uploadIdle;
-        m_uploadInfo = UploadTransferInfo();
+        // ★ 避免 nested event loop：延迟显示对话框
+        QTimer::singleShot(0, this, [this]() {
+            QMessageBox::warning(this, "上传", "服务器准备失败，请重试");
+        });
     }
 }
 
@@ -602,7 +693,12 @@ void Book::cancelUpload()
 
     if (upload_state != Uploading) return;
 
+    qDebug() << "!!! [STATE-3] upload_state→idle (cancelUpload), currentId:" << m_currentUploadId;
     upload_state = uploadIdle;
+
+    // ★断点续传：保存已上传大小，供下次续传使用
+    // uploadedSize 在 onUploadProgress 中随进度更新
+    // m_uploadInfo 的其他字段保留（文件路径等），不清空
 
     // 更新进度项为已中断
     if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
@@ -610,7 +706,7 @@ void Book::cancelUpload()
         if (it) it->setInterrupt();
     }
 
-    // 通知服务器取消上传
+    // 通知服务器取消上传（★服务器不再删除部分文件，保留用于续传）
     sendCancelUploadRequest();
 
     // 通知 Worker 停止读取文件
@@ -623,6 +719,10 @@ void Book::cancelUpload()
 
 void Book::onUploadProgress(int percent)
 {
+    // ★断点续传：根据百分比推算已上传字节数，供中断后恢复使用
+    if (m_uploadInfo.totalSize > 0) {
+        m_uploadInfo.uploadedSize = m_uploadInfo.totalSize * percent / 100;
+    }
     if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
         TransferItem* it = m_progressDialog->item(m_uploadInfo.progressItemId);
         if (it) it->setProgress(percent, 100);
@@ -644,19 +744,28 @@ void Book::onUploadFinished(bool success, const QString &message)
         qDebug() << "本地文件读取完成，等待服务端确认...";
     }
     else {
-        // 取消或错误：立即重置状态，允许用户重试
+        qDebug() << "!!! [STATE-4] upload_state→idle (onUploadFinished false), currentId:" << m_currentUploadId;
+        // 取消或错误：只重置状态，保留断点续传信息
         if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
             m_progressDialog->removeItem(m_uploadInfo.progressItemId);
         }
         upload_state = uploadIdle;
-        m_uploadInfo = UploadTransferInfo();
-        QMessageBox::warning(this, "上传", message);
+        // ★断点续传：不重置 m_uploadInfo！
+        // uploadedSize / localFilePath / totalSize / fileName 已在 onUploadProgress 中
+        // 持续更新，保留这些字段供下次续传使用。
+        // 只清除进度项ID（进度对话框项已移除）
+        m_uploadInfo.progressItemId = -1;
+        // ★ 避免 nested event loop：不在这里调用 QMessageBox
+        // cancel 通知由 cancelUpload() 的 setInterrupt() 在进度对话框体现
+        // 网络错误由 onUploadError() 处理
+        qDebug() << "上传取消/失败, uploadedSize 保留:" << m_uploadInfo.uploadedSize;
     }
 }
 
 void Book::onServerUploadFinish()
 {
     qDebug() << "服务端确认上传完成, 重置上传状态";
+    qDebug() << "!!! [STATE-5] upload_state→idle (onServerUploadFinish), currentId:" << m_currentUploadId;
 
     // 服务端确认，才是真正的上传完成
     if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
@@ -665,7 +774,7 @@ void Book::onServerUploadFinish()
     }
 
     upload_state = uploadIdle;
-    m_uploadInfo = UploadTransferInfo();
+    m_uploadInfo = UploadTransferInfo();  // 全部清空（含serverFileName），全新开始
 
     QMessageBox::information(this, "上传", "上传完成");
     QTimer::singleShot(500, this, &Book::flushFile);
@@ -673,15 +782,21 @@ void Book::onServerUploadFinish()
 
 void Book::onUploadError(const QString &error)
 {
+    qDebug() << "!!! [STATE-6] upload_state→idle (onUploadError), currentId:" << m_currentUploadId
+             << "error:" << error;
     if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
         m_progressDialog->removeItem(m_uploadInfo.progressItemId);
     }
 
     upload_state = uploadIdle;
-    m_uploadInfo = UploadTransferInfo();
+    m_uploadInfo.progressItemId = -1;
+    // ★断点续传：保留 uploadedSize 和文件路径，不清空 m_uploadInfo
+    // （uploadedSize 已在 onUploadProgress 中持续更新）
 
-    QMessageBox::warning(this, "上传错误", error);
-
+    // ★ 避免 nested event loop：延迟显示对话框
+    QTimer::singleShot(0, this, [this, error]() {
+        QMessageBox::warning(this, "上传错误", error);
+    });
 }
 
 
@@ -710,16 +825,53 @@ void Book::downloadFile()
     QString savePath = QFileDialog::getSaveFileName(this, "保存文件", fileName);
     if (savePath.isEmpty()) return;
 
+    // ★断点续传：检查本地是否已有同名部分文件（上次下载中断留下）
+    qint64 startPos = 0;
+    if (QFile::exists(savePath)) {
+        QFileInfo existingFile(savePath);
+        // 检查是否与上次记录的下载信息匹配
+        if (savePath == m_downloadInfo.saveFilePath
+            && m_downloadInfo.downloadedSize > 0
+            && m_downloadInfo.downloadedSize == existingFile.size())
+        {
+            // 同一文件且未下载完，询问用户是否断点续传
+            QString msg = QString("检测到上一次下载中断在 %1\n\n"
+                                   "是否从断点处继续下载？\n"
+                                   "(选择 No 将覆盖已有文件从头开始)")
+                               .arg(formatSize(m_downloadInfo.downloadedSize));
+            int ret = QMessageBox::question(this, "断点续传", msg,
+                                            QMessageBox::Yes | QMessageBox::No);
+            if (ret == QMessageBox::Yes) {
+                startPos = existingFile.size();
+            } else {
+                // 用户选择从头开始，清除续传记录，删除旧文件
+                m_downloadInfo.downloadedSize = 0;
+                QFile::remove(savePath);
+            }
+        }
+        else if (m_downloadInfo.downloadedSize > 0
+                 && savePath != m_downloadInfo.saveFilePath) {
+            // 不同文件，清空旧记录
+            m_downloadInfo.downloadedSize = 0;
+        }
+    }
+    else {
+        // 本地文件不存在，清空续传记录
+        m_downloadInfo.downloadedSize = 0;
+    }
+
     // 保存到独立的下载信息结构体
     m_downloadInfo.saveFilePath = savePath;
     m_downloadInfo.fileName = fileName;
     download_state = Preparing;
 
-    // 发送下载请求（通过主线程的 socket）
+    // 发送下载请求（★断点续传：caData 携带 startPos）
     QString curPath = TcpClient::getInstance().curPath;
     PDU* pdu = makePDU(curPath.toUtf8().size() + 1);
     pdu->uiMsgType = ENUM_MSG_TYPE_DOWNLOAD_REQUEST;
-    qstrncpy(pdu->caData, fileName.toUtf8().constData(), 64);
+    // 协议格式: "fileName|startPos"（startPos 可选，兼容旧协议）
+    QString dataStr = QString("%1|%2").arg(fileName).arg(startPos);
+    qstrncpy(pdu->caData, dataStr.toUtf8().constData(), 64);
     qstrncpy((char*)pdu->caMsg, curPath.toUtf8().constData(), pdu->uiMsglen);
     TcpClient::getInstance().getTcpSocket().write((char*)pdu, pdu->uiPDUlen);
     delete pdu;
@@ -734,6 +886,12 @@ void Book::downloadFile()
     ensureProgressDialog();
     m_downloadInfo.progressItemId = m_progressDialog->addItem(
         TransferDirection::Download, fileName);
+
+    // ★断点续传：如果续传，立即显示起始进度
+    if (startPos > 0 && m_downloadInfo.progressItemId >= 0) {
+        TransferItem* it = m_progressDialog->item(m_downloadInfo.progressItemId);
+        if (it) it->setProgress(startPos, startPos);  // 占位，等 DOWNLOAD_RESPOND 更新 total
+    }
 }
 
 void Book::handleDownloadRespond(PDU *pdu)
@@ -768,6 +926,13 @@ void Book::handleDownloadRespond(PDU *pdu)
     QMetaObject::invokeMethod(m_downloadWorker, "setTotal",
                               Qt::QueuedConnection, Q_ARG(qint64, totalSize));
 
+    // ★断点续传：如果有已下载偏移，传递给 Worker（在 start 之前）
+    if (m_downloadInfo.downloadedSize > 0) {
+        QMetaObject::invokeMethod(m_downloadWorker, "setStartPos",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(qint64, m_downloadInfo.downloadedSize));
+    }
+
     QMetaObject::invokeMethod(m_downloadWorker, "start", Qt::QueuedConnection);
 
 }
@@ -787,6 +952,10 @@ void Book::handleDownloadProcess(PDU *pdu)
 
 void Book::onDownloadProgress(qint64 received, qint64 total)
 {
+    // ★断点续传：记录已下载字节数，供中断后恢复使用
+    m_downloadInfo.downloadedSize = received;
+    m_downloadInfo.totalSize = total;
+
     if (m_progressDialog && m_downloadInfo.progressItemId >= 0) {
         TransferItem* it = m_progressDialog->item(m_downloadInfo.progressItemId);
         if (it) it->setProgress(received, total);
@@ -807,15 +976,18 @@ void Book::onDownloadFinished(bool success, const QString &message)
     }
 
     download_state = Idle;
-    m_downloadInfo = DownloadTransferInfo();
 
     if (success) {
-
+        // 成功：清除续传记录
+        m_downloadInfo = DownloadTransferInfo();
         QMessageBox::information(this, "下载", message);
         flushFile();   // 刷新文件列表
     }
     else {
-
+        // ★断点续传：失败/取消时保留 downloadedSize 和文件路径供续传
+        // （downloadedSize 已在 onDownloadProgress 中持续更新）
+        // 只重置进度项ID（进度对话框项已移除）
+        m_downloadInfo.progressItemId = -1;
         QMessageBox::warning(this, "下载", message);
     }
 }
@@ -827,7 +999,9 @@ void Book::onDownloadError(const QString &error)
     }
 
     download_state = Idle;
-    m_downloadInfo = DownloadTransferInfo();
+    // ★断点续传：保留 downloadedSize 和文件路径，不清空 m_downloadInfo
+    // （DownloadTransferInfo 中的 downloadedSize 已在 onDownloadProgress 中持续更新）
+    // 只重置进度项ID，下次下载时根据 downloadedSize 判断是否续传
 
     QMessageBox::warning(this, "下载错误", error);
 }
@@ -835,6 +1009,9 @@ void Book::onDownloadError(const QString &error)
 void Book::cancelDownload()
 {
     if (download_state != Receiving) return;
+
+    // ★断点续传：m_downloadInfo.downloadedSize 已在 onDownloadProgress 中持续更新，
+    // 这里不清空，供下次续传使用。m_downloadInfo 的其他字段也保留。
 
     // 更新进度项为已中断
     if (m_progressDialog && m_downloadInfo.progressItemId >= 0) {

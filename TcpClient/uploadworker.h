@@ -16,6 +16,7 @@ public:
 
 public slots:
     void setFile(const QString &filePath);   // 设置要上传的本地文件路径
+    void setStartPos(qint64 pos);            // ★断点续传：设置起始读取偏移（seek到此位置再开始读）
     void startUpload();                      // 开始上传
     void cancelUpload();                    // 取消上传
 
@@ -33,6 +34,7 @@ private:
     QFile m_file;
     qint64 m_fileSize;
     qint64 m_sent;
+    qint64 m_startPos;                       // ★断点续传：起始读取偏移（0=从头开始）
     bool m_cancel;
     int m_uploadId;                        // 每次 setFile 递增，防止旧定时器发送错误信号
     QTimer* m_timer;                       // 成员定时器替代 QTimer::singleShot，支持 stop()

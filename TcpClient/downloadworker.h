@@ -18,6 +18,7 @@ public slots:
 
     void setFile(const QString& filePath);
     void setTotal(qint64 totalBytes);
+    void setStartPos(qint64 pos);              // ★断点续传：设置已下载字节数（用于追加模式和进度偏移）
     void start();
     void cancel();
     void writeData(const QByteArray& data);     //主线程调用
@@ -32,7 +33,8 @@ private:
 
     QFile m_file;
     qint64 m_totalBytes;        // 总大小（由外部设置）
-    qint64 m_receivedBytes;     // 已接收字节数
+    qint64 m_receivedBytes;     // 本次已接收字节数（不含断点之前的部分）
+    qint64 m_startPos;          // ★断点续传：断点前已下载的字节数（0=全新下载）
     bool m_cancel;
     mutable QMutex m_mutex;
 };

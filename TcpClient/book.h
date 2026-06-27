@@ -86,14 +86,17 @@ private:
     struct UploadTransferInfo {
         QString localFilePath;
         qint64 totalSize = 0;
+        qint64 uploadedSize = 0;     // ★断点续传：已上传字节数（从服务端确认或本地发送量推算）
         int progressItemId = -1;
-        QString fileName;
+        QString fileName;            // 本地文件名（用于UI显示）
+        QString serverFileName;      // ★断点续传：服务端分配的文件名（重命名后可能与fileName不同）
     };
     UploadTransferInfo m_uploadInfo;
 
     struct DownloadTransferInfo {
         QString saveFilePath;
         qint64 totalSize = 0;
+        qint64 downloadedSize = 0;   // ★断点续传：已下载字节数（本地文件当前大小）
         int progressItemId = -1;
         QString fileName;
     };
