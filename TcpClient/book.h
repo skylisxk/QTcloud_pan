@@ -50,6 +50,7 @@ public:
     QString shareFileName;
 
     void setThreadPool(ThreadPool* pool);
+    void onServerUploadFinish();    // 服务端确认上传完成，重置上传状态
 signals:
 
 public slots:
@@ -107,6 +108,7 @@ private:
     FileUploadState upload_state;
     qint64 upload_sent;
     qint64 upload_total;
+    int m_currentUploadId;               // 当前上传的序号，匹配 Worker 发出的信号
     void cancelUpload();
     QThread* m_uploadThread;
     UploadWorker* m_uploadWorker;

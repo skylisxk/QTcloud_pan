@@ -355,11 +355,8 @@ void TcpClient::handlePdu(PDU* pdu){
 
     case ENUM_MSG_TYPE_UPLOAD_FINISH:{                                      //上传完成
 
-        QMessageBox::information(this, "上传完成", pdu->caData);
-
-        book->flushFile();
-
-        QCoreApplication::processEvents();
+        // 只有服务端的确认才能标记上传真正完成，重置客户端状态
+        book->onServerUploadFinish();
         break;
     }
 

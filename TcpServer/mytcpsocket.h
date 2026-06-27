@@ -7,6 +7,7 @@
 #include <QFileInfoList>
 #include "protocol.h"
 #include <QFile>
+#include <QTimer>
 #include "threadpool.h"
 #include <QDateTime>
 

@@ -80,6 +80,7 @@ Book::Book(QWidget *parent)
 
     setLayout(mainLayout);
     upload_state = uploadIdle;
+    m_currentUploadId = 0;
     download_state = Idle;
 
     m_threadPool = nullptr;
@@ -102,32 +103,52 @@ Book::Book(QWidget *parent)
     m_uploadWorker = new UploadWorker();
     m_uploadWorker->moveToThread(m_uploadThread);
 
-    // 连接信号槽
+    // 连接信号槽（使用 lambda 检查 uploadId，忽略属于上一次上传的延迟信号）
     connect(m_uploadThread, &QThread::finished, m_uploadWorker, &QObject::deleteLater);
-    connect(m_uploadWorker, &UploadWorker::progressUpdated, this, &Book::onUploadProgress);
-    connect(m_uploadWorker, &UploadWorker::uploadFinished, this, &Book::onUploadFinished);
-    connect(m_uploadWorker, &UploadWorker::errorOccurred, this, &Book::onUploadError);
+
+    connect(m_uploadWorker, &UploadWorker::progressUpdated,
+            this, [this](int percent, int uploadId) {
+        if (uploadId != m_currentUploadId) return;  // 忽略旧上传的信号
+        onUploadProgress(percent);
+    });
+
+    connect(m_uploadWorker, &UploadWorker::uploadFinished,
+            this, [this](bool success, const QString &message, int uploadId) {
+        if (uploadId != m_currentUploadId) {
+            qDebug() << "忽略旧上传的完成信号, uploadId:" << uploadId
+                     << "current:" << m_currentUploadId;
+            return;  // 忽略旧上传的延迟信号
+        }
+        onUploadFinished(success, message);
+    });
+
+    connect(m_uploadWorker, &UploadWorker::errorOccurred,
+            this, [this](const QString &error, int uploadId) {
+        if (uploadId != m_currentUploadId) return;  // 忽略旧上传的错误信号
+        onUploadError(error);
+    });
 
     // 读取64kb的文件调用这个函数
     connect(m_uploadWorker, &UploadWorker::dataBlockReady,
-            this, [this](const QByteArray &data) {
+            this, [this](const QByteArray &data, int uploadId) {
 
-                // 如果上传状态不是 Uploading，说明已取消，忽略剩余数据块
-                if (upload_state != Uploading) {
-
-                    qDebug() << "线程中断";
+                // 如果上传ID不匹配或状态不是 Uploading，说明已取消/属于旧上传，忽略
+                if (uploadId != m_currentUploadId || upload_state != Uploading) {
+                    qDebug() << "忽略数据块, uploadId:" << uploadId
+                             << "current:" << m_currentUploadId
+                             << "state:" << upload_state;
                     return;
                 }
                 // 在主线程中执行, 数据写入到缓冲区并返回字节
                 QTcpSocket &socket = TcpClient::getInstance().getTcpSocket();
                 qint64 sent = socket.write(data);
-                qDebug() << "socket write error, sent:" << sent;
+                qDebug() << "socket write sent:" << sent;
 
 
-                // 如果文件大小和传输的不一样
+                // 如果写入大小不符，说明发送失败
                 if (sent != data.size()) {
 
-                    qDebug() << "socket write error, sent:" << sent;
+                    qDebug() << "socket write error, sent:" << sent << "expected:" << data.size();
                     // 取消上传
                     QMetaObject::invokeMethod(m_uploadWorker, "cancelUpload", Qt::QueuedConnection);
 
@@ -472,6 +493,12 @@ void Book::enterDir(QTreeWidgetItem* item, int column)
 
 void Book::uploadFile()
 {
+    // 防止重复点击上传：如果已有上传正在进行，提示用户
+    if (upload_state == Uploading) {
+        QMessageBox::warning(this, "上传", "已有文件正在上传，请等待完成或取消后再试");
+        return;
+    }
+
     // 将本地文件上传
     QString cur_path = TcpClient::getInstance().curPath;
     QString localFilePath = QFileDialog::getOpenFileName(this, "选择要上传的文件");
@@ -480,6 +507,9 @@ void Book::uploadFile()
     QFileInfo info(localFilePath);
     QString fileName = info.fileName();
     qint64 fileSize = info.size();
+
+    // 递增上传ID，使上一次上传的延迟信号被忽略
+    m_currentUploadId++;
 
     // 保存到独立的上传信息结构体
     m_uploadInfo.localFilePath = localFilePath;
@@ -512,6 +542,8 @@ void Book::handleUploadRespond(PDU* pdu)
         QMessageBox::warning(this, "上传", "服务器响应格式错误");
         if (m_progressDialog && m_uploadInfo.progressItemId >= 0)
             m_progressDialog->removeItem(m_uploadInfo.progressItemId);
+        upload_state = uploadIdle;
+        m_uploadInfo = UploadTransferInfo();
         return;
     }
 
@@ -533,9 +565,12 @@ void Book::handleUploadRespond(PDU* pdu)
     }
 
     else if (status == FILE_UPLOAD_FAIL) {
-        QMessageBox::warning(this, "上传", "服务器准备失败");
+        QMessageBox::warning(this, "上传", "服务器准备失败，请重试");
         if (m_progressDialog && m_uploadInfo.progressItemId >= 0)
             m_progressDialog->removeItem(m_uploadInfo.progressItemId);
+        // 重置上传状态，允许用户重试
+        upload_state = uploadIdle;
+        m_uploadInfo = UploadTransferInfo();
     }
 }
 
@@ -598,29 +633,42 @@ void Book::onUploadFinished(bool success, const QString &message)
 {
     qDebug() << "onUploadFinished, success:" << success << "msg:" << message;
 
-    if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
-        if (success) {
+    if (success) {
+        // ★ Worker 读完文件 ≠ 服务端确认完成 ★
+        // 只显示进度100%，不调用 setFinished()，避免用户误以为完成而立即发起新上传。
+        // upload_state 保持 Uploading，只有收到 UPLOAD_FINISH → onServerUploadFinish() 才重置。
+        if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
             TransferItem* it = m_progressDialog->item(m_uploadInfo.progressItemId);
-            if (it) it->setFinished();
-        } else {
+            if (it) it->setProgress(100, 100);  // 100%，但不标记完成
+        }
+        qDebug() << "本地文件读取完成，等待服务端确认...";
+    }
+    else {
+        // 取消或错误：立即重置状态，允许用户重试
+        if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
             m_progressDialog->removeItem(m_uploadInfo.progressItemId);
         }
+        upload_state = uploadIdle;
+        m_uploadInfo = UploadTransferInfo();
+        QMessageBox::warning(this, "上传", message);
+    }
+}
+
+void Book::onServerUploadFinish()
+{
+    qDebug() << "服务端确认上传完成, 重置上传状态";
+
+    // 服务端确认，才是真正的上传完成
+    if (m_progressDialog && m_uploadInfo.progressItemId >= 0) {
+        TransferItem* it = m_progressDialog->item(m_uploadInfo.progressItemId);
+        if (it) it->setFinished();  // 现在才标记完成
     }
 
     upload_state = uploadIdle;
     m_uploadInfo = UploadTransferInfo();
 
-    if (success) {
-
-        QMessageBox::information(this, "上传", message);
-        QTimer::singleShot(500, this, &Book::flushFile); // 延迟刷新
-    }
-    else {
-
-        QMessageBox::warning(this, "上传", message);
-    }
-
-
+    QMessageBox::information(this, "上传", "上传完成");
+    QTimer::singleShot(500, this, &Book::flushFile);
 }
 
 void Book::onUploadError(const QString &error)

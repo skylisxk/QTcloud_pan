@@ -92,52 +92,82 @@ void MyTcpSocket::onReadyRead()
 {
     if (m_isClosing) return;
 
-    // 优先处理协议消息,包括取消请求
-    const int MAX_PDU = 10;
-    int processed = 0;
+    // 外层循环：因为清理残留数据后可能暴露出合法PDU，需要循环处理
+    // 最多迭代3次避免死循环（PDU→文件数据→清理→PDU 各一次）
+    for (int loop = 0; loop < 3 && bytesAvailable() > 0; loop++) {
+        bool didWork = false;
 
-    while (bytesAvailable() >= sizeof(unsigned int) && processed < MAX_PDU) {
+        // 第一步：解析协议消息（包括取消请求）
+        const int MAX_PDU = 10;
+        int processed = 0;
 
-        unsigned int testLen = 0;
-        peek((char*)&testLen, sizeof(unsigned int));
+        while (bytesAvailable() >= sizeof(unsigned int) && processed < MAX_PDU) {
+            unsigned int testLen = 0;
+            peek((char*)&testLen, sizeof(unsigned int));
 
-        if (testLen >= sizeof(PDU) && testLen <= 10 * 1024 * 1024) {
-
-            if (!tryParsePDU()) break;
-
-            processed++;
-        }
-        else {
-
-            break;
-        }
-    }
-
-    // 处理文件数据上传
-    if (upload_state == Receiving && bytesAvailable() > 0) {
-        // 限制单次读取大小，避免阻塞协议消息处理
-        const qint64 MAX_CHUNK = 64 * 1024;
-        QByteArray data;
-
-        if (bytesAvailable() > MAX_CHUNK) {
-
-            data = read(MAX_CHUNK);
-        }
-        else {
-
-            data = readAll();
-        }
-
-        if (!data.isEmpty()) {
-
-            q_file.write(data);
-            file_recve += data.size();
-
-            if (file_recve >= file_recve_total) {
-
-                handleUploadComplete();
+            if (testLen >= sizeof(PDU) && testLen <= 10 * 1024 * 1024) {
+                if (!tryParsePDU()) break;
+                processed++;
+                didWork = true;
+            } else {
+                break;
             }
         }
+
+        // 第二步：处理文件数据上传
+        // ★ 关键：只读取预期剩余字节数，绝不多读！
+        //    因为缓冲区中可能已经包含下一个PDU（如新UPLOAD_REQUEST），
+        //    如果 readAll() 会把它当文件数据吃掉，导致客户端永远等待。
+        if (upload_state == Receiving && bytesAvailable() > 0) {
+            const qint64 MAX_CHUNK = 64 * 1024;
+            qint64 remaining = file_recve_total - file_recve;
+            qint64 toRead = qMin(bytesAvailable(), qMin(MAX_CHUNK, remaining));
+
+            if (toRead > 0) {
+                QByteArray data = read(toRead);
+                if (!data.isEmpty()) {
+                    q_file.write(data);
+                    file_recve += data.size();
+                    didWork = true;
+
+                    if (file_recve >= file_recve_total) {
+                        handleUploadComplete();
+                    }
+                }
+            }
+        }
+
+        // 第三步：清理非上传状态下缓冲区中的残留文件数据
+        // ★ 只丢弃前端不构成有效PDU的字节，不能 readAll()！
+        //    因为残留文件数据后面可能紧跟着合法PDU（例如：中断后重传时，
+        //    旧上传的尾部数据和新UPLOAD_REQUEST PDU可能在同一个TCP包中）
+        else if (upload_state != Receiving && bytesAvailable() >= sizeof(unsigned int)) {
+            qint64 discarded = 0;
+            while (bytesAvailable() >= sizeof(unsigned int)) {
+                unsigned int testLen = 0;
+                peek((char*)&testLen, sizeof(unsigned int));
+                if (testLen >= sizeof(PDU) && testLen <= 10 * 1024 * 1024) {
+                    // 找到有效PDU头，停止丢弃，外层循环会回来解析它
+                    break;
+                }
+                char c;
+                read(&c, 1);
+                discarded++;
+                didWork = true;
+            }
+            if (discarded > 0) {
+                qDebug() << "丢弃非PDU残留数据:" << discarded << "bytes";
+            }
+            // 如果剩余数据不够sizeof(unsigned int)且非空，全部丢弃
+            if (bytesAvailable() < sizeof(unsigned int) && bytesAvailable() > 0) {
+                qint64 remaining = bytesAvailable();
+                readAll();
+                qDebug() << "丢弃尾部残留数据:" << remaining << "bytes";
+                didWork = true;
+            }
+        }
+
+        if (!didWork) break;  // 没有进展，避免死循环
     }
 }
 
@@ -798,10 +828,12 @@ void MyTcpSocket::clientOffline()
 void MyTcpSocket::handleUploadRequest(PDU *pdu)
 {
 
-    // 如果正在上传，拒绝新请求
+    // 如果正在上传，拒绝新请求（发送失败响应，客户端可据此恢复状态）
     if(upload_state != Idle) {
 
         qDebug() << "已有文件正在上传，拒绝新请求";
+        // 使用 sendUploadResponse 确保格式 "status|fileName" 与客户端解析一致
+        sendUploadResponse(FILE_UPLOAD_FAIL, QString());
         return;
     }
 
@@ -934,11 +966,9 @@ void MyTcpSocket::handleUploadComplete()
     file_recve = 0;
     m_cancelUpload = false;
 
-    // 清空可能残留的缓冲区
-    while(bytesAvailable() > 0) {
-
-        readAll();
-    }
+    // 注意：不在这里清空缓冲区！
+    // onReadyRead() 会在文件数据处理之后、PDU解析之前统一清理非PDU残留数据。
+    // 如果这里 readAll()，会吞掉紧随文件数据到达的下一个UPLOAD_REQUEST PDU。
 
     qDebug() << "=== handleUploadComplete called ===";
 
