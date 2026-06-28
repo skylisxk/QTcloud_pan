@@ -15,6 +15,33 @@
 #include <QPointer>
 #include "uploadworker.h"
 #include "downloadworker.h"
+#include <QDateTime>
+
+// ★支持按大小/日期排序的文件列表项（仿 Windows 资源管理器）
+class FileTreeWidgetItem : public QTreeWidgetItem
+{
+public:
+    using QTreeWidgetItem::QTreeWidgetItem;
+
+    bool operator<(const QTreeWidgetItem &other) const override
+    {
+        int col = treeWidget() ? treeWidget()->sortColumn() : 0;
+        // 文件夹始终排在文件前面（仿 Windows）
+        int thisType = data(0, Qt::UserRole).toInt();
+        int otherType = other.data(0, Qt::UserRole).toInt();
+        if (thisType != otherType) {
+            return thisType == 0;  // 0=文件夹，文件夹在前
+        }
+        switch (col) {
+        case 1: // 大小：按原始字节数排序
+            return data(1, Qt::UserRole).toLongLong() < other.data(1, Qt::UserRole).toLongLong();
+        case 2: // 日期：按 QDateTime 排序
+            return data(2, Qt::UserRole).toDateTime() < other.data(2, Qt::UserRole).toDateTime();
+        default: // 名称：不区分大小写
+            return text(col).compare(other.text(col), Qt::CaseInsensitive) < 0;
+        }
+    }
+};
 
 
 class Book : public QWidget

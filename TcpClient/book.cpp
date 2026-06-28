@@ -26,6 +26,10 @@ Book::Book(QWidget *parent)
     bookList->setHeaderLabels({QString::fromUtf8("名称"), QString::fromUtf8("大小"), QString::fromUtf8("修改日期")});
     bookList->setRootIsDecorated(false);
     bookList->setSelectionMode(QAbstractItemView::SingleSelection);
+    // ★支持点击表头排序，默认按名称 A→Z
+    bookList->setSortingEnabled(true);
+    bookList->sortByColumn(0, Qt::AscendingOrder);
+    bookList->header()->setSortIndicatorShown(true);
     bookList->header()->setStretchLastSection(false);
     bookList->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     bookList->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
@@ -300,15 +304,18 @@ void Book::updateFileList(const PDU *pdu)
 
                 for(const auto& item_data : items){
 
-                    QTreeWidgetItem* item = new QTreeWidgetItem;
+                    FileTreeWidgetItem* item = new FileTreeWidgetItem;
 
                     QString iconPath = (item_data.fileType == 0) ? ":/icon/dir.jpg" : ":/icon/file.jpg";
                     item->setIcon(0, QIcon(iconPath));
                     item->setText(0, item_data.fileName);
                     item->setText(1, item_data.fileType == 0 ? QString() : formatSize(item_data.fileSize));
                     item->setText(2, item_data.lastModified);
-                    // 存储文件类型，方便后续操作（如双击时判断是文件还是文件夹）
+                    // 存储文件类型（0=文件夹, 1=文件）
                     item->setData(0, Qt::UserRole, item_data.fileType);
+                    // ★排序辅助数据
+                    item->setData(1, Qt::UserRole, item_data.fileSize);
+                    item->setData(2, Qt::UserRole, QDateTime::fromString(item_data.lastModified, "yyyy-MM-dd HH:mm"));
 
                     bookList->addTopLevelItem(item);
                 }
@@ -325,13 +332,16 @@ void Book::updateFileList(const PDU *pdu)
         for(int i = 0; i < file_count; i++) {
             FileInfo* file_info = (FileInfo*)pdu->caMsg + i;
 
-            QTreeWidgetItem* item = new QTreeWidgetItem;
+            FileTreeWidgetItem* item = new FileTreeWidgetItem;
             QString iconPath = (file_info->fileType == 0) ? ":/icon/dir.jpg" : ":/icon/file.jpg";
             item->setIcon(0, QIcon(iconPath));
             item->setText(0, QString::fromUtf8(file_info->fileName));
             item->setText(1, file_info->fileType == 0 ? QString() : formatSize(file_info->fileSize));
             item->setText(2, QString::fromUtf8(file_info->lastModified));
             item->setData(0, Qt::UserRole, file_info->fileType);
+            // ★排序辅助数据
+            item->setData(1, Qt::UserRole, file_info->fileSize);
+            item->setData(2, Qt::UserRole, QDateTime::fromString(QString::fromUtf8(file_info->lastModified), "yyyy-MM-dd HH:mm"));
             bookList->addTopLevelItem(item);
         }
 
@@ -351,9 +361,10 @@ void Book::createDir()
     }
 
     //在列表添加新的项
-    QTreeWidgetItem* item = new QTreeWidgetItem;
+    FileTreeWidgetItem* item = new FileTreeWidgetItem;
     item->setIcon(0, QIcon(":/icon/dir.jpg"));
     item->setText(0, dir_name);
+    item->setData(0, Qt::UserRole, 0);  // 0=文件夹
     bookList->addTopLevelItem(item);
 
     //发送用户名，新建文件夹名，目录信息
