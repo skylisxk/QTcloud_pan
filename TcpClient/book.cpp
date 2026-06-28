@@ -43,6 +43,7 @@ Book::Book(QWidget *parent)
     removeDirFilePB = new QPushButton("删除文件");
     removeDirFilePB->setObjectName("removeDirFilePB");
     sharePB = new QPushButton("分享文件");
+    sharePB->setObjectName("sharePB");
     renamePB = new QPushButton("重命名文件夹");
     flushPB = new QPushButton("刷新文件");
     uploadPB = new QPushButton("上传文件");
@@ -70,6 +71,22 @@ Book::Book(QWidget *parent)
     fileVBL->addWidget(sharePB);
     fileVBL->addWidget(removeDirFilePB);
     dirVBL->addLayout(fileVBL);
+
+    // ★传输进度恢复按钮（进度条收起后点击恢复）
+    QPushButton* showProgressBtn = new QPushButton("📊 传输进度");
+    showProgressBtn->setStyleSheet(
+        "QPushButton { font-size: 11px; color: #409eff; border: 1px dashed #b3d8ff; border-radius: 4px; padding: 4px 8px; background: transparent; }"
+        "QPushButton:hover { color: #337ecc; border-color: #409eff; background: #ecf5ff; }"
+    );
+    connect(showProgressBtn, &QPushButton::clicked, this, [this]() {
+        ensureProgressDialog();
+        if (m_progressDialog) {
+            m_progressDialog->show();
+            m_progressDialog->raise();
+            m_progressDialog->activateWindow();
+        }
+    });
+    dirVBL->addWidget(showProgressBtn);
     dirVBL->addStretch();
 
     QHBoxLayout* mainLayout = new QHBoxLayout;
@@ -1168,7 +1185,7 @@ void Book::handleShareResponse(PDU *pdu)
 void Book::ensureProgressDialog()
 {
     if (!m_progressDialog) {
-        m_progressDialog = new ProgressDialog(this);
+        m_progressDialog = new ProgressDialog(nullptr);  // ★无父窗口，独立任务栏图标
         m_progressDialog->setAttribute(Qt::WA_DeleteOnClose);
         m_progressDialog->setModal(false);
         m_progressDialog->setWindowModality(Qt::NonModal);
@@ -1188,6 +1205,14 @@ void Book::ensureProgressDialog()
             m_progressDialog = nullptr;
             qDebug() << "进度对话框已销毁";
         });
+    }
+    // ★确保对话框可见（收起后可通过此方法恢复）
+    if (m_progressDialog && m_progressDialog->isHidden()) {
+        m_progressDialog->show();
+    }
+    if (m_progressDialog) {
+        m_progressDialog->raise();
+        m_progressDialog->activateWindow();
     }
 }
 

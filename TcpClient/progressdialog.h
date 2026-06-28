@@ -58,6 +58,7 @@ public:
     int addItem(TransferDirection dir, const QString& fileName);
     void removeItem(int transferId);
     TransferItem* item(int transferId) const;
+    int activeCount() const { return m_activeCount; }
 
 signals:
     void cancelled(int transferId);

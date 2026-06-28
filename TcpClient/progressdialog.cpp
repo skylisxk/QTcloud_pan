@@ -146,6 +146,9 @@ ProgressDialog::ProgressDialog(QWidget* parent)
 {
     setWindowTitle("传输进度");
     setModal(false);
+    // ★作为独立顶层窗口，可 Alt+Tab 切换，标题栏自带 − □ ×
+    setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint |
+                   Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint);
     setMinimumWidth(500);
     setMaximumHeight(500);
     setStyleSheet(
@@ -248,3 +251,5 @@ void ProgressDialog::closeEvent(QCloseEvent* event)
     }
     event->accept();
 }
+
+

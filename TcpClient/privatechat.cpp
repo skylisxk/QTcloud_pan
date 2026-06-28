@@ -8,6 +8,8 @@ PrivateChat::PrivateChat(QWidget *parent)
     , ui(new Ui::PrivateChat)
 {
     ui->setupUi(this);
+    setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint |
+                   Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint);
 }
 
 PrivateChat::~PrivateChat()

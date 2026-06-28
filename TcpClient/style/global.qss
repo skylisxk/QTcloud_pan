@@ -60,22 +60,33 @@ QPushButton#selectConfirmPB:pressed {
     border-color: #3a8ee6;
 }
 
-/* 绿色按钮（上传/下载） */
+/* 蓝色文字按钮（上传/下载） */
 QPushButton#uploadPB,
 QPushButton#downloadPB {
-    background-color: #67c23a;
-    border: 1px solid #67c23a;
-    color: #ffffff;
+    color: #409eff;
+    border-color: #409eff;
 }
 
 QPushButton#uploadPB:hover,
 QPushButton#downloadPB:hover {
-    background-color: #85ce61;
-    border-color: #85ce61;
-    color: #ffffff;
+    background-color: #ecf5ff;
+    color: #409eff;
+    border-color: #409eff;
 }
 
-/* 红色按钮（删除） */
+/* 绿色文字按钮（分享） */
+QPushButton#sharePB {
+    color: #67c23a;
+    border-color: #67c23a;
+}
+
+QPushButton#sharePB:hover {
+    background-color: #f0f9eb;
+    color: #67c23a;
+    border-color: #67c23a;
+}
+
+/* 红色文字按钮（删除） */
 QPushButton#removeDirFilePB,
 QPushButton#delFriendButton {
     color: #f56c6c;

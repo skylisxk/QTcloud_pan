@@ -19,6 +19,9 @@ TcpClient::TcpClient(QWidget *parent)
     , m_threadPool(4)
 {
     ui->setupUi(this);
+    // ★调试便利：预填默认登录账号密码
+    ui->name_le->setText("jack");
+    ui->pwd_le->setText("123");
     loadConfig();
 
     book = nullptr;

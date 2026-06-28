@@ -8,6 +8,8 @@ ShareFile::ShareFile(QWidget *parent)
     : QWidget{parent}
 {
     setWindowTitle("分享文件");
+    setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint |
+                   Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint);
     setStyleSheet("QWidget { background-color: #ffffff; }");
     setMinimumSize(320, 350);
 
